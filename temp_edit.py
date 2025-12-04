@@ -1,0 +1,10 @@
+﻿from pathlib import Path
+p=Path("src/app/compras/page.tsx")
+text=p.read_text(encoding='utf-8')
+text=text.replace('const totalDesejado = parseCurrency(form.total);\n    const totalItensValor = totalItens;\n    const freteAjustado = Math.max(totalDesejado - totalItensValor, 0);\n\n    ', 'const valorTotal = parseCurrency(form.total);\n    ')
+text=text.replace('frete: freteAjustado,','valorTotal: valorTotal,')
+text=text.replace('Parcelas (somente crǸdito)','Parcelas (somente credito)')
+text=text.replace('Cartao/conta (obrigat��rio para pix/dǸbito/crǸdito)','Cartao/conta (obrigatorio para pix/debito/credito)')
+text=text.replace('sao obrigatorios','são obrigatórios')
+text=text.replace('Observacoes','Observacoes')
+p.write_text(text,encoding='utf-8')

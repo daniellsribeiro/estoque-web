@@ -5,22 +5,14 @@ import { ProtectedShell } from "@/components/protected-shell";
 import { apiFetch } from "@/lib/api-client";
 
 type Supplier = { id: string; nome: string };
-type PaymentType = { id: string; descricao: string; parcelavel?: boolean; minParcelas?: number; maxParcelas?: number };
-type CardAccount = {
-  id: string;
-  nome: string;
-  bandeira?: string | null;
-  banco?: string | null;
-  pixChave?: string | null;
-  diaFechamento?: number | null;
-  diaVencimento?: number | null;
-};
+type PaymentType = { id: string; descricao: string; parcelavel: boolean; minParcelas: number; maxParcelas: number };
+type CardAccount = { id: string; nome: string; bandeira?: string };
 type Product = { id: string; nome: string };
 type Purchase = {
   id: string;
   data: string;
-  fornecedor: Supplier;
-  tipoPagamento: PaymentType;
+  fornecedor?: Supplier;
+  tipoPagamento?: PaymentType;
   totalCompra: number;
   status: string;
 };
@@ -28,7 +20,7 @@ type PurchasePayment = {
   id: string;
   compra: { id: string };
   nParcela: number;
-  dataVencimento: string | null;
+  dataVencimento: string;
   valorParcela: number;
   statusPagamento: string;
 };
@@ -41,14 +33,13 @@ const formatCurrency = (value: string) => {
   const withThousands = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   return `${withThousands},${decimal}`;
 };
-
 const parseCurrency = (value: string) => {
   const digits = value.replace(/\D/g, "");
   const cents = parseInt(digits || "0", 10);
   return cents / 100;
 };
 
-type ItemInput = { produtoId: string; qtde: string; valorUnit: string; search: string };
+type ItemInput = { produtoId: string; qtde: string; valorUnit: string };
 
 export default function ComprasPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -68,34 +59,21 @@ export default function ComprasPage() {
     tipoPagamentoId: "",
     cartaoContaId: "",
     parcelas: 1,
-    total: "0,00",
+    frete: "0,00",
     observacoes: "",
   });
+  const [itens, setItens] = useState<ItemInput[]>([{ produtoId: "", qtde: "1", valorUnit: "0,00" }]);
 
-  const [itens, setItens] = useState<ItemInput[]>([{ produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
-
-  const totalCompra = useMemo(() => parseCurrency(form.total), [form.total]);
-
-  const tipoSelecionado = useMemo(() => types.find((t) => t.id === form.tipoPagamentoId), [types, form.tipoPagamentoId]);
-  const tipoDesc = (tipoSelecionado?.descricao || "").toLowerCase();
-  const isCredito = useMemo(
-    () => ["cr", "cred", "crédito", "credito"].some((k) => tipoDesc.includes(k)),
-    [tipoDesc],
-  );
-  const requiresCard = useMemo(
+  const totalItens = useMemo(
     () =>
-      ["pix", "debito", "débito", "credito", "crédito"].some((k) => tipoDesc.includes(k)) &&
-      !tipoDesc.includes("dinheiro"),
-    [tipoDesc],
+      itens.reduce((acc, it) => {
+        const qt = Number(it.qtde) || 0;
+        const val = parseCurrency(it.valorUnit);
+        return acc + qt * val;
+      }, 0),
+    [itens],
   );
-
-  const filteredCards = useMemo(() => {
-    if (!requiresCard) return [];
-    if (tipoDesc.includes("pix")) return cards.filter((c) => !!c.pixChave);
-    if (isCredito) return cards.filter((c) => c.diaFechamento != null && c.diaVencimento != null);
-    // débito ou genérico que exige cartão
-    return cards;
-  }, [cards, requiresCard, tipoDesc, isCredito]);
+  const totalCompra = useMemo(() => totalItens + parseCurrency(form.frete), [totalItens, form.frete]);
 
   const loadAll = async () => {
     try {
@@ -108,12 +86,12 @@ export default function ComprasPage() {
         apiFetch<Purchase[]>("/compras"),
         apiFetch<PurchasePayment[]>("/compras/pagamentos"),
       ]);
-      setSuppliers(forn || []);
-      setTypes(tp || []);
-      setCards(ca || []);
-      setProducts(prd || []);
-      setCompras(comp || []);
-      setPagamentos(pays || []);
+      setSuppliers(forn ?? []);
+      setTypes(tp ?? []);
+      setCards(ca ?? []);
+      setProducts(prd ?? []);
+      setCompras(comp ?? []);
+      setPagamentos(pays ?? []);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados");
@@ -126,45 +104,22 @@ export default function ComprasPage() {
     loadAll();
   }, []);
 
-  useEffect(() => {
-    if (!requiresCard) {
-      setForm((p) => ({ ...p, cartaoContaId: "" }));
-    }
-  }, [requiresCard]);
-
-  useEffect(() => {
-    setForm((p) => ({
-      ...p,
-      fornecedorId: p.fornecedorId || suppliers[0]?.id || "",
-      tipoPagamentoId: p.tipoPagamentoId || types[0]?.id || "",
-    }));
-  }, [suppliers, types]);
-
   async function handleSubmit() {
     if (!form.fornecedorId || !form.tipoPagamentoId) {
       setError("Fornecedor e tipo de pagamento são obrigatórios.");
-      return;
-    }
-    if (requiresCard && !form.cartaoContaId) {
-      setError("Selecione um cartão/conta para este meio de pagamento.");
-      return;
-    }
-    if (isCredito && (!form.parcelas || form.parcelas < 1)) {
-      setError("Informe o número de parcelas para crédito.");
       return;
     }
     if (itens.some((it) => !it.produtoId)) {
       setError("Selecione todos os produtos nos itens.");
       return;
     }
-
     const body = {
       data: form.data,
       fornecedorId: form.fornecedorId,
       tipoPagamentoId: form.tipoPagamentoId,
-      cartaoContaId: requiresCard ? form.cartaoContaId : undefined,
-      parcelas: isCredito ? form.parcelas : 1,
-      totalCompra,
+      cartaoContaId: form.cartaoContaId || undefined,
+      parcelas: form.parcelas,
+      frete: parseCurrency(form.frete),
       observacoes: form.observacoes || undefined,
       itens: itens.map((it) => ({
         produtoId: it.produtoId,
@@ -172,12 +127,14 @@ export default function ComprasPage() {
         valorUnit: parseCurrency(it.valorUnit),
       })),
     };
-
-    await apiFetch("/compras", { method: "POST", body: JSON.stringify(body) });
+    await apiFetch("/compras", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
     setMessage("Compra registrada");
     setError(null);
-    setItens([{ produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
-    setForm((p) => ({ ...p, total: "0,00", observacoes: "" }));
+    setItens([{ produtoId: "", qtde: "1", valorUnit: "0,00" }]);
+    setForm((p) => ({ ...p, frete: "0,00", observacoes: "" }));
     await loadAll();
   }
 
@@ -189,7 +146,9 @@ export default function ComprasPage() {
     await loadAll();
   }
 
-  const parcelasSelecionadas = selectedCompraId ? pagamentos.filter((p) => p.compra.id === selectedCompraId) : [];
+  const parcelasSelecionadas = selectedCompraId
+    ? pagamentos.filter((p) => p.compra.id === selectedCompraId)
+    : [];
 
   return (
     <ProtectedShell title="Compras" subtitle="Pedidos e pagamentos">
@@ -205,7 +164,7 @@ export default function ComprasPage() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
+        <div className="lg:col-span-2 space-y-6">
           <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
             <div className="flex items-center justify-between">
               <div>
@@ -233,10 +192,9 @@ export default function ComprasPage() {
                   </option>
                 ))}
               </select>
-
               <select
                 value={form.tipoPagamentoId}
-                onChange={(e) => setForm((p) => ({ ...p, tipoPagamentoId: e.target.value, cartaoContaId: "" }))}
+                onChange={(e) => setForm((p) => ({ ...p, tipoPagamentoId: e.target.value }))}
                 className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
               >
                 <option value="">Meio de pagamento</option>
@@ -246,52 +204,32 @@ export default function ComprasPage() {
                   </option>
                 ))}
               </select>
-
-              {requiresCard && (
-                <select
-                  value={form.cartaoContaId}
-                  onChange={(e) => setForm((p) => ({ ...p, cartaoContaId: e.target.value }))}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                >
-                  <option value="">
-                    {tipoDesc.includes("pix")
-                      ? "Selecione cartão com PIX"
-                      : isCredito
-                        ? "Selecione cartão com fechamento/vencimento"
-                        : "Selecione cartão/conta"}
+              <select
+                value={form.cartaoContaId}
+                onChange={(e) => setForm((p) => ({ ...p, cartaoContaId: e.target.value }))}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              >
+                <option value="">Cartão/Conta (se cartão/link)</option>
+                {cards.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nome} {c.bandeira ? `(${c.bandeira})` : ""}
                   </option>
-                  {filteredCards.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nome} {c.bandeira ? `(${c.bandeira})` : ""}
-                    </option>
-                  ))}
-                </select>
-              )}
-
-              {isCredito && (
-                <div className="space-y-1">
-                  <label className="text-xs text-slate-400">Parcelas (somente crédito)</label>
-                  <input
-                    value={form.parcelas}
-                    onChange={(e) => setForm((p) => ({ ...p, parcelas: Number(e.target.value) || 1 }))}
-                    placeholder="Parcelas"
-                    inputMode="numeric"
-                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                  />
-                </div>
-              )}
-
-              <div className="space-y-1">
-                <label className="text-xs text-slate-400">Valor total (considera taxas do crédito)</label>
-                <input
-                  value={form.total}
-                  onChange={(e) => setForm((p) => ({ ...p, total: formatCurrency(e.target.value) }))}
-                  placeholder="Valor total (R$)"
-                  inputMode="decimal"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                />
-              </div>
-
+                ))}
+              </select>
+              <input
+                value={form.parcelas}
+                onChange={(e) => setForm((p) => ({ ...p, parcelas: Number(e.target.value) || 1 }))}
+                placeholder="Parcelas"
+                inputMode="numeric"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+            />
+            <input
+              value={form.frete}
+              onChange={(e) => setForm((p) => ({ ...p, frete: formatCurrency(e.target.value) }))}
+              placeholder="Frete (R$)"
+              inputMode="decimal"
+              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+            />
               <textarea
                 value={form.observacoes}
                 onChange={(e) => setForm((p) => ({ ...p, observacoes: e.target.value }))}
@@ -305,79 +243,65 @@ export default function ComprasPage() {
                 <p className="font-semibold">Itens</p>
                 <button
                   className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                  onClick={() => setItens((arr) => [...arr, { produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }])}
+                  onClick={() => setItens((arr) => [...arr, { produtoId: "", qtde: "1", valorUnit: "0,00" }])}
                 >
                   Adicionar item
                 </button>
               </div>
-              <div className="mt-3 space-y-3">
-                {itens.map((it, idx) => {
-                  const termo = (it.search || "").toLowerCase();
-                  const filtrados = products.filter((p) => p.nome.toLowerCase().includes(termo));
-                  return (
-                    <div key={idx} className="grid gap-2 md:grid-cols-5">
-                      <div className="md:col-span-2 space-y-1">
-                        <input
-                          value={it.search || ""}
-                          onChange={(e) =>
-                            setItens((arr) => arr.map((a, i) => (i === idx ? { ...a, search: e.target.value } : a)))
-                          }
-                          placeholder="Buscar produto pelo nome"
-                          className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                        />
-                        <select
-                          value={it.produtoId}
-                          onChange={(e) =>
-                            setItens((arr) =>
-                              arr.map((a, i) => (i === idx ? { ...a, produtoId: e.target.value, search: a.search } : a)),
-                            )
-                          }
-                          className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              <div className="mt-3 space-y-2">
+                {itens.map((it, idx) => (
+                  <div key={idx} className="grid gap-2 md:grid-cols-4">
+                    <select
+                      value={it.produtoId}
+                      onChange={(e) =>
+                        setItens((arr) =>
+                          arr.map((a, i) => (i === idx ? { ...a, produtoId: e.target.value } : a)),
+                        )
+                      }
+                      className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                    >
+                      <option value="">Produto</option>
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nome}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={it.qtde}
+                      onChange={(e) =>
+                        setItens((arr) => arr.map((a, i) => (i === idx ? { ...a, qtde: e.target.value } : a)))
+                      }
+                      placeholder="Qtde"
+                      inputMode="numeric"
+                      className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                    />
+                    <input
+                      value={it.valorUnit}
+                      onChange={(e) =>
+                        setItens((arr) =>
+                          arr.map((a, i) => (i === idx ? { ...a, valorUnit: formatCurrency(e.target.value) } : a)),
+                        )
+                      }
+                      placeholder="Valor unitário"
+                      inputMode="decimal"
+                      className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                    />
+                    <div className="flex items-center justify-between md:justify-end md:gap-2">
+                      <span className="text-slate-400">
+                        R$ {(Number(it.qtde || 0) * parseCurrency(it.valorUnit)).toFixed(2)}
+                      </span>
+                      {itens.length > 1 && (
+                        <button
+                          className="rounded-lg bg-rose-500 px-3 py-1 text-xs font-semibold text-white transition hover:bg-rose-400"
+                          onClick={() => setItens((arr) => arr.filter((_, i) => i !== idx))}
                         >
-                          <option value="">Selecione o produto</option>
-                          {filtrados.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.nome}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <input
-                        value={it.qtde}
-                        onChange={(e) =>
-                          setItens((arr) => arr.map((a, i) => (i === idx ? { ...a, qtde: e.target.value } : a)))
-                        }
-                        placeholder="Qtde"
-                        inputMode="numeric"
-                        className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                      />
-                      <input
-                        value={it.valorUnit}
-                        onChange={(e) =>
-                          setItens((arr) =>
-                            arr.map((a, i) => (i === idx ? { ...a, valorUnit: formatCurrency(e.target.value) } : a)),
-                          )
-                        }
-                        placeholder="Valor unitário (R$)"
-                        inputMode="decimal"
-                        className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                      />
-                      <div className="flex items-center justify-between md:justify-end md:gap-2">
-                        <span className="text-slate-400">
-                          R$ {(Number(it.qtde || 0) * parseCurrency(it.valorUnit)).toFixed(2)}
-                        </span>
-                        {itens.length > 1 && (
-                          <button
-                            className="rounded-lg bg-rose-500 px-3 py-1 text-xs font-semibold text-white transition hover:bg-rose-400"
-                            onClick={() => setItens((arr) => arr.filter((_, i) => i !== idx))}
-                          >
-                            Remover
-                          </button>
-                        )}
-                      </div>
+                          Remover
+                        </button>
+                      )}
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -420,9 +344,9 @@ export default function ComprasPage() {
                   <tbody>
                     {compras.map((c) => (
                       <tr key={c.id} className="border-t border-slate-800">
-                        <td className="px-4 py-2">{c.data.slice(0, 10) || ""}</td>
-                        <td className="px-4 py-2">{c.fornecedor.nome || "-"}</td>
-                        <td className="px-4 py-2">{c.tipoPagamento.descricao || "-"}</td>
+                        <td className="px-4 py-2">{c.data?.slice(0, 10) ?? ""}</td>
+                        <td className="px-4 py-2">{c.fornecedor?.nome ?? "-"}</td>
+                        <td className="px-4 py-2">{c.tipoPagamento?.descricao ?? "-"}</td>
                         <td className="px-4 py-2">R$ {Number(c.totalCompra || 0).toFixed(2)}</td>
                         <td className="px-4 py-2 capitalize">{c.status}</td>
                         <td className="px-4 py-2 text-right">
@@ -468,7 +392,7 @@ export default function ComprasPage() {
                     {parcelasSelecionadas.map((p) => (
                       <tr key={p.id} className="border-t border-slate-800">
                         <td className="px-4 py-2">{p.nParcela}</td>
-                        <td className="px-4 py-2">{p.dataVencimento ? p.dataVencimento.slice(0, 10) : "-"}</td>
+                        <td className="px-4 py-2">{p.dataVencimento?.slice(0, 10) ?? ""}</td>
                         <td className="px-4 py-2">R$ {Number(p.valorParcela || 0).toFixed(2)}</td>
                         <td className="px-4 py-2 capitalize">{p.statusPagamento}</td>
                         <td className="px-4 py-2 text-right">
@@ -493,3 +417,4 @@ export default function ComprasPage() {
     </ProtectedShell>
   );
 }
+
