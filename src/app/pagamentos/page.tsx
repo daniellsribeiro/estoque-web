@@ -102,6 +102,7 @@ export default function PagamentosPage() {
   const [selectedCardExtract, setSelectedCardExtract] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>(formatMonth());
   const [paymentTypeFilter, setPaymentTypeFilter] = useState<string>("");
+  const [showExtract, setShowExtract] = useState(false);
 
   const loadAll = async () => {
     try {
@@ -207,6 +208,7 @@ export default function PagamentosPage() {
       .reduce((acc, p) => acc + Number(p.valorParcela || 0), 0);
     return { total, pago, pendente: total - pago };
   }, [pagamentosFiltrados]);
+  const temPendencias = resumoPagamentos.pendente > 0;
 
   async function handleCreateCard() {
     const payload = {
@@ -258,7 +260,7 @@ export default function PagamentosPage() {
   };
 
   return (
-    <ProtectedShell title="Pagamentos" subtitle="Cartoes, regras de link e tipos de pagamento">
+    <ProtectedShell title="Cartões" subtitle="Cartoes, regras de link e tipos de pagamento">
       {message && (
         <div className="mb-4 rounded-lg bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200 ring-1 ring-emerald-500/40">
           {message}
@@ -601,8 +603,16 @@ export default function PagamentosPage() {
                 Escolha cartão e mês para ver parcelas (pagas e abertas), resumo e marcar tudo como pago.
               </p>
             </div>
+            <button
+              onClick={() => setShowExtract((v) => !v)}
+              className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-100 transition hover:border-cyan-400"
+            >
+              {showExtract ? "Ocultar" : "Mostrar"}
+            </button>
           </div>
 
+          {showExtract && (
+            <>
           <div className="grid gap-2 md:grid-cols-3 text-sm">
             <select
               value={selectedCardExtract}
@@ -668,6 +678,7 @@ export default function PagamentosPage() {
                     <th className="px-4 py-2">Parcela</th>
                     <th className="px-4 py-2">Vencimento</th>
                     <th className="px-4 py-2">Valor</th>
+                    <th className="px-4 py-2">Tipo</th>
                     <th className="px-4 py-2">Status</th>
                   </tr>
                 </thead>
@@ -677,6 +688,7 @@ export default function PagamentosPage() {
                       <td className="px-4 py-2">{p.nParcela}</td>
                       <td className="px-4 py-2">{p.dataVencimento ? p.dataVencimento.slice(0, 10) : "-"}</td>
                       <td className="px-4 py-2">R$ {Number(p.valorParcela || 0).toFixed(2)}</td>
+                      <td className="px-4 py-2">{p.tipoPagamento?.descricao ?? "-"}</td>
                       <td className="px-4 py-2 capitalize">{p.statusPagamento}</td>
                     </tr>
                   ))}
@@ -692,13 +704,21 @@ export default function PagamentosPage() {
                 <div>Pago: R$ {resumoPagamentos.pago.toFixed(2)}</div>
                 <div>Pendente: R$ {resumoPagamentos.pendente.toFixed(2)}</div>
               </div>
-              <button
-                className="rounded-lg bg-cyan-400 px-4 py-2 text-xs font-semibold text-slate-900 transition hover:bg-cyan-300"
-                onClick={marcarFaturaPaga}
-              >
-                Marcar mês como pago
-              </button>
+              {temPendencias ? (
+                <button
+                  className="rounded-lg bg-cyan-400 px-4 py-2 text-xs font-semibold text-slate-900 transition hover:bg-cyan-300"
+                  onClick={marcarFaturaPaga}
+                >
+                  Marcar mês como pago
+                </button>
+              ) : (
+                <div className="rounded-lg bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-500/30">
+                  Sem pendências neste mês.
+                </div>
+              )}
             </div>
+          )}
+            </>
           )}
         </div>
       </div>

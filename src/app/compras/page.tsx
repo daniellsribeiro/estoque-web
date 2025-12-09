@@ -15,7 +15,8 @@ type CardAccount = {
   diaFechamento?: number | null;
   diaVencimento?: number | null;
 };
-type Product = { id: string; nome: string };
+type ProductAttr = { id: string; nome: string };
+type Product = { id: string; nome: string; tipo?: ProductAttr | null; cor?: ProductAttr | null; material?: ProductAttr | null };
 type Purchase = {
   id: string;
   data: string;
@@ -24,6 +25,12 @@ type Purchase = {
   totalCompra: number;
   status: string;
 };
+type PurchaseDetail = Purchase & {
+  observacoes?: string | null;
+  parcelas: number;
+  cartaoConta?: CardAccount | null;
+  itens?: { id: string; qtde: number; valorUnit: number; valorTotal: number; item?: { nome: string; codigo: string } }[];
+};
 type PurchasePayment = {
   id: string;
   compra: { id: string };
@@ -31,6 +38,7 @@ type PurchasePayment = {
   dataVencimento: string | null;
   valorParcela: number;
   statusPagamento: string;
+  cartaoConta?: { id: string; nome?: string | null; bandeira?: string | null; banco?: string | null; pixChave?: string | null };
 };
 
 const formatCurrency = (value: string) => {
@@ -48,6 +56,8 @@ const parseCurrency = (value: string) => {
   return cents / 100;
 };
 
+const onlyNumbers = (value: string) => value.replace(/[^0-9]/g, "");
+
 type ItemInput = { produtoId: string; qtde: string; valorUnit: string; search: string };
 
 export default function ComprasPage() {
@@ -60,7 +70,13 @@ export default function ComprasPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [selectedCompraId, setSelectedCompraId] = useState<string | null>(null);
+  const [parcelasCompraId, setParcelasCompraId] = useState<string | null>(null);
+  const [showZeroModal, setShowZeroModal] = useState(false);
+  const [detalheCompra, setDetalheCompra] = useState<PurchaseDetail | null>(null);
+  const [detalheCarregando, setDetalheCarregando] = useState(false);
+  const [filtroTipo, setFiltroTipo] = useState("");
+  const [filtroCor, setFiltroCor] = useState("");
+  const [filtroMaterial, setFiltroMaterial] = useState("");
 
   const [form, setForm] = useState({
     data: new Date().toISOString().slice(0, 10),
@@ -75,6 +91,7 @@ export default function ComprasPage() {
   const [itens, setItens] = useState<ItemInput[]>([{ produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
 
   const totalCompra = useMemo(() => parseCurrency(form.total), [form.total]);
+  const totalCompraZerado = totalCompra === 0;
 
   const tipoSelecionado = useMemo(() => types.find((t) => t.id === form.tipoPagamentoId), [types, form.tipoPagamentoId]);
   const tipoDesc = (tipoSelecionado?.descricao || "").toLowerCase();
@@ -96,6 +113,28 @@ export default function ComprasPage() {
     // débito ou genérico que exige cartão
     return cards;
   }, [cards, requiresCard, tipoDesc, isCredito]);
+
+  const tiposFiltro = useMemo(() => {
+    const map = new Map<string, ProductAttr>();
+    products.forEach((p) => {
+      if (p.tipo) map.set(p.tipo.id, p.tipo);
+    });
+    return Array.from(map.values());
+  }, [products]);
+  const coresFiltro = useMemo(() => {
+    const map = new Map<string, ProductAttr>();
+    products.forEach((p) => {
+      if (p.cor) map.set(p.cor.id, p.cor);
+    });
+    return Array.from(map.values());
+  }, [products]);
+  const materiaisFiltro = useMemo(() => {
+    const map = new Map<string, ProductAttr>();
+    products.forEach((p) => {
+      if (p.material) map.set(p.material.id, p.material);
+    });
+    return Array.from(map.values());
+  }, [products]);
 
   const loadAll = async () => {
     try {
@@ -140,7 +179,7 @@ export default function ComprasPage() {
     }));
   }, [suppliers, types]);
 
-  async function handleSubmit() {
+  async function handleSubmit(forceZero?: boolean) {
     if (!form.fornecedorId || !form.tipoPagamentoId) {
       setError("Fornecedor e tipo de pagamento são obrigatórios.");
       return;
@@ -155,6 +194,11 @@ export default function ComprasPage() {
     }
     if (itens.some((it) => !it.produtoId)) {
       setError("Selecione todos os produtos nos itens.");
+      return;
+    }
+    const valorUnitZero = itens.some((it) => parseCurrency(it.valorUnit) <= 0);
+    if ((totalCompra <= 0 || valorUnitZero) && !forceZero) {
+      setShowZeroModal(true);
       return;
     }
 
@@ -181,15 +225,22 @@ export default function ComprasPage() {
     await loadAll();
   }
 
-  async function marcarParcelaPaga(id: string) {
-    await apiFetch(`/compras/pagamentos/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ statusPagamento: "paga", dataPagamento: new Date().toISOString() }),
-    });
-    await loadAll();
-  }
+  const parcelasSelecionadas = parcelasCompraId ? pagamentos.filter((p) => p.compra.id === parcelasCompraId) : [];
+  const compraSelecionada = useMemo(() => compras.find((c) => c.id === parcelasCompraId), [compras, parcelasCompraId]);
 
-  const parcelasSelecionadas = selectedCompraId ? pagamentos.filter((p) => p.compra.id === selectedCompraId) : [];
+  const abrirDetalheCompra = async (id: string) => {
+    setDetalheCarregando(true);
+    setDetalheCompra(null);
+    try {
+      const data = await apiFetch<PurchaseDetail>(`/compras/${id}`);
+      setDetalheCompra(data ?? null);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao carregar detalhes da compra");
+    } finally {
+      setDetalheCarregando(false);
+    }
+  };
 
   return (
     <ProtectedShell title="Compras" subtitle="Pedidos e pagamentos">
@@ -204,15 +255,20 @@ export default function ComprasPage() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
+      <div className="space-y-6">
+        <div className="space-y-6">
           <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-slate-50">Nova compra</h3>
                 <p className="text-sm text-slate-400">Itens, parcelas e fornecedor.</p>
               </div>
-              <span className="text-sm text-slate-300">Total: R$ {totalCompra.toFixed(2)}</span>
+              <div className="text-right">
+                <span className="text-sm text-slate-300 block">Total: R$ {totalCompra.toFixed(2)}</span>
+                {totalCompraZerado && (
+                  <span className="text-xs text-amber-300">Valor total zerado — confirme se está correto.</span>
+                )}
+              </div>
             </div>
             <div className="mt-3 grid gap-3 text-sm md:grid-cols-2">
               <input
@@ -310,10 +366,59 @@ export default function ComprasPage() {
                   Adicionar item
                 </button>
               </div>
+              <div className="mt-3 grid gap-2 md:grid-cols-3">
+                <select
+                  value={filtroTipo}
+                  onChange={(e) => setFiltroTipo(e.target.value)}
+                  className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-50 outline-none focus:border-cyan-400"
+                >
+                  <option value="">Tipo</option>
+                  {tiposFiltro.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nome}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={filtroCor}
+                  onChange={(e) => setFiltroCor(e.target.value)}
+                  className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-50 outline-none focus:border-cyan-400"
+                >
+                  <option value="">Cor</option>
+                  {coresFiltro.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nome}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={filtroMaterial}
+                  onChange={(e) => setFiltroMaterial(e.target.value)}
+                  className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-50 outline-none focus:border-cyan-400"
+                >
+                  <option value="">Material</option>
+                  {materiaisFiltro.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.nome}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="mt-3 space-y-3">
                 {itens.map((it, idx) => {
                   const termo = (it.search || "").toLowerCase();
-                  const filtrados = products.filter((p) => p.nome.toLowerCase().includes(termo));
+                  const filtradosBase = products.filter((p) => {
+                    const matchesNome = p.nome.toLowerCase().includes(termo);
+                    const matchesTipo = !filtroTipo || p.tipo?.id === filtroTipo;
+                    const matchesCor = !filtroCor || p.cor?.id === filtroCor;
+                    const matchesMaterial = !filtroMaterial || p.material?.id === filtroMaterial;
+                    return matchesNome && matchesTipo && matchesCor && matchesMaterial;
+                  });
+                  const produtoSelecionado = products.find((p) => p.id === it.produtoId);
+                  const filtrados =
+                    produtoSelecionado && !filtradosBase.some((p) => p.id === produtoSelecionado.id)
+                      ? [produtoSelecionado, ...filtradosBase]
+                      : filtradosBase;
                   return (
                     <div key={idx} className="grid gap-2 md:grid-cols-5">
                       <div className="md:col-span-2 space-y-1">
@@ -345,7 +450,11 @@ export default function ComprasPage() {
                       <input
                         value={it.qtde}
                         onChange={(e) =>
-                          setItens((arr) => arr.map((a, i) => (i === idx ? { ...a, qtde: e.target.value } : a)))
+                          setItens((arr) =>
+                            arr.map((a, i) =>
+                              i === idx ? { ...a, qtde: onlyNumbers(e.target.value) || "0" } : a,
+                            ),
+                          )
                         }
                         placeholder="Qtde"
                         inputMode="numeric"
@@ -414,7 +523,7 @@ export default function ComprasPage() {
                       <th className="px-4 py-2">Tipo</th>
                       <th className="px-4 py-2">Total</th>
                       <th className="px-4 py-2">Status</th>
-                      <th className="px-4 py-2 text-right">Parcelas</th>
+                      <th className="px-4 py-2 text-right">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -426,12 +535,20 @@ export default function ComprasPage() {
                         <td className="px-4 py-2">R$ {Number(c.totalCompra || 0).toFixed(2)}</td>
                         <td className="px-4 py-2 capitalize">{c.status}</td>
                         <td className="px-4 py-2 text-right">
-                          <button
-                            className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                            onClick={() => setSelectedCompraId(c.id)}
-                          >
-                            Ver parcelas
-                          </button>
+                          <div className="flex justify-end gap-2">
+                            <button
+                              className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                              onClick={() => abrirDetalheCompra(c.id)}
+                            >
+                              Detalhes
+                            </button>
+                            <button
+                              className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                              onClick={() => setParcelasCompraId(c.id)}
+                            >
+                              Parcelas
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -442,16 +559,135 @@ export default function ComprasPage() {
           </div>
         </div>
 
-        <div className="space-y-6">
-          <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
-            <h3 className="text-lg font-semibold text-slate-50">Parcelas</h3>
-            <p className="text-sm text-slate-400">
-              {selectedCompraId ? "Parcela da compra selecionada." : "Selecione uma compra para ver parcelas."}
-            </p>
-            <div className="mt-3 max-h-96 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60 text-sm text-slate-200">
-              {!selectedCompraId ? (
-                <div className="p-3 text-slate-400">Nenhuma compra selecionada.</div>
-              ) : parcelasSelecionadas.length === 0 ? (
+      </div>
+
+      {(detalheCompra || detalheCarregando) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4">
+          <div className="w-full max-w-4xl rounded-xl bg-slate-900 p-6 text-sm text-slate-200 ring-1 ring-slate-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-base font-semibold text-slate-50">Detalhes da compra</p>
+                {detalheCompra?.id && <p className="text-xs text-slate-400">ID: {detalheCompra.id}</p>}
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetalheCompra(null)}
+                className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+              >
+                Fechar
+              </button>
+            </div>
+
+            {detalheCarregando ? (
+              <p className="mt-4 text-slate-300">Carregando...</p>
+            ) : detalheCompra ? (
+              <div className="mt-4 space-y-3">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Fornecedor</p>
+                    <p className="font-semibold text-slate-50">{detalheCompra.fornecedor?.nome ?? "-"}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Tipo de pagamento</p>
+                    <p className="font-semibold text-slate-50">{detalheCompra.tipoPagamento?.descricao ?? "-"}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Data</p>
+                    <p className="font-semibold text-slate-50">
+                      {detalheCompra.data ? detalheCompra.data.slice(0, 10) : "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Parcelas</p>
+                    <p className="font-semibold text-slate-50">{detalheCompra.parcelas ?? "-"}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Cartão/Conta</p>
+                    <p className="font-semibold text-slate-50">
+                      {detalheCompra.cartaoConta?.nome ??
+                        detalheCompra.cartaoConta?.bandeira ??
+                        detalheCompra.cartaoConta?.banco ??
+                        "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Status</p>
+                    <p className="font-semibold text-slate-50 capitalize">{detalheCompra.status}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                  <p className="text-xs text-slate-400">Total</p>
+                  <p className="text-lg font-semibold text-slate-50">R$ {Number(detalheCompra.totalCompra || 0).toFixed(2)}</p>
+                  {detalheCompra.observacoes && (
+                    <p className="mt-2 text-xs text-slate-400">Obs: {detalheCompra.observacoes}</p>
+                  )}
+                </div>
+
+                <div>
+                  <p className="text-xs text-slate-400">Itens</p>
+                  {detalheCompra.itens && detalheCompra.itens.length > 0 ? (
+                    <div className="mt-2 max-h-64 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
+                          <tr>
+                            <th className="px-3 py-2">Produto</th>
+                            <th className="px-3 py-2 text-right">Qtd</th>
+                            <th className="px-3 py-2 text-right">Unit</th>
+                            <th className="px-3 py-2 text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detalheCompra.itens.map((it) => (
+                            <tr key={it.id} className="border-t border-slate-800">
+                              <td className="px-3 py-2">
+                                {it.item?.nome ?? "-"} {it.item?.codigo ? `(${it.item.codigo})` : ""}
+                              </td>
+                              <td className="px-3 py-2 text-right">{it.qtde}</td>
+                              <td className="px-3 py-2 text-right">R$ {Number(it.valorUnit || 0).toFixed(2)}</td>
+                              <td className="px-3 py-2 text-right">R$ {Number(it.valorTotal || 0).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-slate-300">Nenhum item listado.</p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-4 text-rose-200">Compra não encontrada.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {parcelasCompraId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4">
+          <div className="w-full max-w-4xl rounded-xl bg-slate-900 p-6 text-sm text-slate-200 ring-1 ring-slate-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-base font-semibold text-slate-50">Parcelas da compra</p>
+                <p className="text-xs text-slate-400">
+                  {compraSelecionada
+                    ? `${compraSelecionada.fornecedor?.nome ?? "-"} • ${
+                        compraSelecionada.data ? compraSelecionada.data.slice(0, 10) : "-"
+                      }`
+                    : "Compra selecionada"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setParcelasCompraId(null)}
+                className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-4 max-h-[420px] overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+              {parcelasSelecionadas.length === 0 ? (
                 <div className="p-3 text-slate-400">Sem parcelas cadastradas.</div>
               ) : (
                 <table className="min-w-full">
@@ -460,8 +696,8 @@ export default function ComprasPage() {
                       <th className="px-4 py-2">Parcela</th>
                       <th className="px-4 py-2">Vencimento</th>
                       <th className="px-4 py-2">Valor</th>
+                      <th className="px-4 py-2">Cartão/Conta</th>
                       <th className="px-4 py-2">Status</th>
-                      <th className="px-4 py-2 text-right">Ação</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -470,17 +706,14 @@ export default function ComprasPage() {
                         <td className="px-4 py-2">{p.nParcela}</td>
                         <td className="px-4 py-2">{p.dataVencimento ? p.dataVencimento.slice(0, 10) : "-"}</td>
                         <td className="px-4 py-2">R$ {Number(p.valorParcela || 0).toFixed(2)}</td>
-                        <td className="px-4 py-2 capitalize">{p.statusPagamento}</td>
-                        <td className="px-4 py-2 text-right">
-                          {p.statusPagamento !== "paga" && (
-                            <button
-                              className="rounded-lg bg-emerald-500 px-3 py-1 text-xs font-semibold text-white transition hover:bg-emerald-400"
-                              onClick={() => marcarParcelaPaga(p.id)}
-                            >
-                              Marcar paga
-                            </button>
-                          )}
+                        <td className="px-4 py-2">
+                          {p.cartaoConta?.nome ||
+                            p.cartaoConta?.bandeira ||
+                            p.cartaoConta?.banco ||
+                            p.cartaoConta?.pixChave ||
+                            "-"}
                         </td>
+                        <td className="px-4 py-2 capitalize">{p.statusPagamento}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -489,7 +722,50 @@ export default function ComprasPage() {
             </div>
           </div>
         </div>
-      </div>
+      )}
+
+      
+
+
+      {showZeroModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4">
+          <div className="w-full max-w-lg rounded-xl bg-slate-900 p-6 text-sm text-slate-200 ring-1 ring-slate-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-base font-semibold text-slate-50">Valores zerados</p>
+                <p className="text-xs text-slate-400">Total da compra ou algum item est? com valor 0.</p>
+              </div>
+            </div>
+            <div className="mt-3 space-y-2 text-slate-200">
+              <p>Deseja continuar mesmo assim?</p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowZeroModal(false)}
+                  className="rounded-lg bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowZeroModal(false);
+                    try {
+                      await handleSubmit(true);
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Erro ao salvar compra");
+                    }
+                  }}
+                  className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-slate-900 transition hover:bg-amber-400"
+                >
+                  Continuar com zero
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </ProtectedShell>
   );
 }
