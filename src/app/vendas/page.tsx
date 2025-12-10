@@ -122,6 +122,8 @@ export default function VendasPage() {
   const [showClienteModal, setShowClienteModal] = useState(false);
   const [novoCliente, setNovoCliente] = useState({ nome: "", telefone: "", email: "", observacoes: "" });
   const [salvandoCliente, setSalvandoCliente] = useState(false);
+  const [salvandoVenda, setSalvandoVenda] = useState(false);
+  const [marcandoPago, setMarcandoPago] = useState(false);
   const [clienteBusca, setClienteBusca] = useState("");
 
   const [filtroTipo, setFiltroTipo] = useState("");
@@ -276,10 +278,10 @@ export default function VendasPage() {
       }, 0),
     [itens],
   );
-  const totalFinal = useMemo(
-    () => totalItens + parseCurrency(form.frete) - parseCurrency(form.desconto),
-    [totalItens, form.frete, form.desconto],
-  );
+  const freteValor = useMemo(() => parseCurrency(form.frete), [form.frete]);
+  const descontoPercent = useMemo(() => parseCurrency(form.desconto), [form.desconto]);
+  const descontoValor = useMemo(() => (totalItens * descontoPercent) / 100, [totalItens, descontoPercent]);
+  const totalFinal = useMemo(() => totalItens - descontoValor + freteValor, [totalItens, descontoValor, freteValor]);
   const valorParcela = useMemo(
     () => (form.parcelas && form.parcelas > 0 ? totalFinal / form.parcelas : 0),
     [form.parcelas, totalFinal],
@@ -494,6 +496,7 @@ useEffect(() => {
   const removerItem = (index: number) => setItens((prev) => prev.filter((_, idx) => idx !== index));
 
   async function submitVenda() {
+    if (salvandoVenda) return;
     if (!form.clienteId || !form.tipoPagamentoId) {
       setErro("Cliente e forma de pagamento sao obrigatorios.");
       return;
@@ -552,7 +555,8 @@ useEffect(() => {
       pagoAgora: form.pagoAgora || undefined,
       dataPagamento: form.pagoAgora ? form.data : undefined,
       frete: parseCurrency(form.frete),
-      descontoTotal: parseCurrency(form.desconto),
+      frete: freteValor,
+      descontoTotal: descontoValor,
       observacoes: form.observacoes || undefined,
       itens: itens.map((it) => ({
         produtoId: it.produtoId,
@@ -562,6 +566,7 @@ useEffect(() => {
     };
 
     try {
+      setSalvandoVenda(true);
       setErro(null);
       const result = await apiFetch<SaleDetail>("/vendas", {
         method: "POST",
@@ -580,6 +585,8 @@ useEffect(() => {
       await carregarTudo();
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao registrar venda");
+    } finally {
+      setSalvandoVenda(false);
     }
   }
 
@@ -616,8 +623,9 @@ useEffect(() => {
   };
 
   const marcarPago = async () => {
-    if (!payModal?.id) return;
+    if (!payModal?.id || marcandoPago) return;
     try {
+      setMarcandoPago(true);
       setErro(null);
       await apiFetch(`/vendas/${payModal.id}/pagar`, {
         method: "PATCH",
@@ -631,6 +639,8 @@ useEffect(() => {
       }
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao marcar pagamento");
+    } finally {
+      setMarcandoPago(false);
     }
   };
 
@@ -703,7 +713,9 @@ useEffect(() => {
             </div>
             <div className="text-right text-xs text-slate-400">
               <div>Total itens: R$ {totalItens.toFixed(2)}</div>
-              <div>Total bruto: R$ {totalFinal.toFixed(2)}</div>
+              <div>Frete: R$ {freteValor.toFixed(2)}</div>
+              <div>Desconto: {descontoPercent.toFixed(2)}% (R$ {descontoValor.toFixed(2)})</div>
+              <div>Total com frete: R$ {totalFinal.toFixed(2)}</div>
               {regraSelecionada ? (
                 <>
                   <div>Total liquido (c/ taxa): R$ {totalLiquido.toFixed(2)}</div>
@@ -855,12 +867,15 @@ useEffect(() => {
               />
             </label>
             <label className="space-y-1">
-              <span className="text-slate-300">Desconto</span>
+              <span className="text-slate-300">Desconto (%)</span>
               <input
                 value={form.desconto}
                 onChange={(e) => setForm((p) => ({ ...p, desconto: formatCurrency(e.target.value) }))}
                 className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
               />
+              <p className="text-[11px] text-slate-500">
+                Aplicado sobre itens: R$ {descontoValor.toFixed(2)}
+              </p>
             </label>
             <label className="flex items-center gap-2 pt-6 text-sm text-slate-200">
               <input
@@ -999,10 +1014,10 @@ useEffect(() => {
               <button
                 type="button"
                 onClick={submitVenda}
-                disabled={carregando}
+                disabled={carregando || salvandoVenda}
                 className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-500 disabled:opacity-60"
               >
-                {carregando ? "Salvando..." : "Salvar venda"}
+                {salvandoVenda ? "Salvando..." : "Salvar venda"}
               </button>
             </div>
           </div>
@@ -1137,9 +1152,10 @@ useEffect(() => {
               <button
                 type="button"
                 onClick={marcarPago}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-emerald-500"
+                disabled={marcandoPago}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-emerald-500 disabled:opacity-60"
               >
-                Confirmar pagamento
+                {marcandoPago ? "Salvando..." : "Confirmar pagamento"}
               </button>
             </div>
           </div>

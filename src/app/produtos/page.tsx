@@ -52,6 +52,8 @@ export default function ProdutosPage() {
   const [priceEditProductId, setPriceEditProductId] = useState<string | null>(null);
   const [priceInput, setPriceInput] = useState("0,00");
   const [priceCreateInput, setPriceCreateInput] = useState("0,00");
+  const [salvandoProduto, setSalvandoProduto] = useState(false);
+  const [salvandoPreco, setSalvandoPreco] = useState(false);
 
   const categories: Record<CategoryKey, { label: string; desc: string; fields: FormField[]; path: string }> = useMemo(
     () => ({
@@ -156,11 +158,10 @@ export default function ProdutosPage() {
   }
 
   async function handleCreateProduct(formData: FormData) {
-    setError(null);
-    setMessage(null);
+    if (salvandoProduto) return;
     const preco = parseCurrency(priceCreateInput);
     if (Number.isNaN(preco) || preco <= 0) {
-      setError("Informe um preço de venda válido.");
+      setError("Informe um preco de venda valido.");
       return;
     }
     const body = {
@@ -173,15 +174,26 @@ export default function ProdutosPage() {
       precoVendaAtual: preco,
       ativo: true,
     };
-    await apiFetch("/produtos", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    await loadProducts();
-    setMessage("Produto adicionado com sucesso");
-    setShowProductTable(true);
-    setShowFormProduct(false);
-    setPriceCreateInput("0,00");
+    try {
+      setSalvandoProduto(true);
+      setError(null);
+      setMessage(null);
+      await apiFetch("/produtos", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      await loadProducts();
+      setMessage("Produto adicionado com sucesso");
+      setShowProductTable(true);
+      setShowFormProduct(false);
+      setPriceCreateInput("0,00");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar produto");
+      setMessage(null);
+      throw err;
+    } finally {
+      setSalvandoProduto(false);
+    }
   }
 
   async function handleUpdateProduct(id: string, body: { nome?: string; observacao?: string }) {
@@ -221,19 +233,27 @@ export default function ProdutosPage() {
   }
 
   async function handleSavePrice() {
-    if (!priceEditProductId) return;
+    if (!priceEditProductId || salvandoPreco) return;
     const value = parseCurrency(priceInput);
     if (Number.isNaN(value) || value <= 0) {
-      setError("Informe um valor numérico maior que zero.");
+      setError("Informe um valor numerico maior que zero.");
       return;
     }
-    await apiFetch(`/produtos/${priceEditProductId}/preco`, {
-      method: "POST",
-      body: JSON.stringify({ precoVendaAtual: value }),
-    });
-    setPriceEditProductId(null);
-    await loadProducts();
-    setError(null);
+    try {
+      setSalvandoPreco(true);
+      setError(null);
+      await apiFetch(`/produtos/${priceEditProductId}/preco`, {
+        method: "POST",
+        body: JSON.stringify({ precoVendaAtual: value }),
+      });
+      setPriceEditProductId(null);
+      await loadProducts();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar preco");
+    } finally {
+      setSalvandoPreco(false);
+    }
   }
 
   async function loadPriceHistory(productId: string) {
@@ -376,9 +396,10 @@ export default function ProdutosPage() {
             <div className="md:col-span-2">
               <button
                 type="submit"
-                className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300"
+                disabled={salvandoProduto}
+                className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
               >
-                Salvar produto
+                {salvandoProduto ? "Salvando..." : "Salvar produto"}
               </button>
             </div>
           </form>
@@ -555,9 +576,10 @@ export default function ProdutosPage() {
               />
               <button
                 onClick={handleSavePrice}
-                className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300"
+                disabled={salvandoPreco}
+                className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
               >
-                Salvar preço
+                {salvandoPreco ? "Salvando..." : "Salvar pre?o"}
               </button>
             </div>
           </div>
@@ -777,15 +799,22 @@ type FormCardProps = {
 };
 
 function FormCard({ fields, onSubmit, onSubmitted }: FormCardProps) {
+  const [saving, setSaving] = useState(false);
   return (
     <form
       className="space-y-2 text-sm"
       onSubmit={async (e) => {
         e.preventDefault();
+        if (saving) return;
         const fd = new FormData(e.currentTarget);
-        await onSubmit(fd);
-        (e.target as HTMLFormElement).reset();
-        onSubmitted?.();
+        try {
+          setSaving(true);
+          await onSubmit(fd);
+          (e.target as HTMLFormElement).reset();
+          onSubmitted?.();
+        } finally {
+          setSaving(false);
+        }
       }}
     >
       {fields.map((field) => (
@@ -801,9 +830,10 @@ function FormCard({ fields, onSubmit, onSubmitted }: FormCardProps) {
       ))}
       <button
         type="submit"
-        className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300"
+        disabled={saving}
+        className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
       >
-        Salvar
+        {saving ? "Salvando..." : "Salvar"}
       </button>
     </form>
   );

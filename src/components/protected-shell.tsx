@@ -29,6 +29,7 @@ export function ProtectedShell({ title, subtitle, children }: Props) {
       { label: "Produtos", href: "/produtos" },
       { label: "Estoque", href: "/estoque" },
       { label: "Compras", href: "/compras" },
+      { label: "Gastos", href: "/gastos" },
       { label: "Vendas", href: "/vendas" },
       { label: "Clientes", href: "/clientes" },
       { label: "Fornecedores", href: "/fornecedores" },

@@ -17,6 +17,7 @@ export default function ClientesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [salvandoCliente, setSalvandoCliente] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [showLista, setShowLista] = useState(false);
   const [telefoneInput, setTelefoneInput] = useState("");
@@ -41,6 +42,7 @@ export default function ClientesPage() {
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (salvandoCliente) return;
     const formEl = e.currentTarget;
     const fd = new FormData(formEl);
     const body = {
@@ -54,10 +56,13 @@ export default function ClientesPage() {
       return;
     }
     if (body.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
-      setError("Email inválido");
+      setError("Email inv?lido");
       return;
     }
     try {
+      setSalvandoCliente(true);
+      setMessage(null);
+      setError(null);
       await apiFetch("/clientes", {
         method: "POST",
         body: JSON.stringify(body),
@@ -73,6 +78,8 @@ export default function ClientesPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar cliente");
       setMessage(null);
+    } finally {
+      setSalvandoCliente(false);
     }
   };
 
@@ -151,9 +158,10 @@ export default function ClientesPage() {
             <div className="md:col-span-2">
               <button
                 type="submit"
-                className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300"
+                disabled={salvandoCliente}
+                className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
               >
-                Salvar cliente
+                {salvandoCliente ? "Salvando..." : "Salvar cliente"}
               </button>
             </div>
           </form>

@@ -7,6 +7,8 @@ import { apiFetch } from "@/lib/api-client";
 export default function FinanceiroPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [salvandoTipo, setSalvandoTipo] = useState(false);
+  const [salvandoConta, setSalvandoConta] = useState(false);
 
   return (
     <ProtectedShell title="Financeiro" subtitle="Fluxos de caixa e cartões">
@@ -28,6 +30,7 @@ export default function FinanceiroPage() {
             className="mt-4 space-y-3 text-sm"
             onSubmit={async (e) => {
               e.preventDefault();
+              if (salvandoTipo) return;
               const fd = new FormData(e.currentTarget);
               const body = {
                 descricao: fd.get("descricao"),
@@ -40,6 +43,9 @@ export default function FinanceiroPage() {
                 maxParcelas: Number(fd.get("maxParcelas") || 1),
               };
               try {
+                setSalvandoTipo(true);
+                setMessage(null);
+                setError(null);
                 await apiFetch("/financeiro/tipos-pagamento", {
                   method: "POST",
                   body: JSON.stringify(body),
@@ -50,6 +56,8 @@ export default function FinanceiroPage() {
               } catch (err) {
                 setError(err instanceof Error ? err.message : "Erro ao salvar");
                 setMessage(null);
+              } finally {
+                setSalvandoTipo(false);
               }
             }}
           >
@@ -113,9 +121,10 @@ export default function FinanceiroPage() {
             </div>
             <button
               type="submit"
-              className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300"
+              disabled={salvandoTipo}
+              className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
             >
-              Salvar tipo
+              {salvandoTipo ? "Salvando..." : "Salvar tipo"}
             </button>
           </form>
         </div>
@@ -127,6 +136,7 @@ export default function FinanceiroPage() {
             className="mt-4 space-y-3 text-sm"
             onSubmit={async (e) => {
               e.preventDefault();
+              if (salvandoConta) return;
               const fd = new FormData(e.currentTarget);
               const body = {
                 nome: fd.get("nome"),
@@ -137,6 +147,9 @@ export default function FinanceiroPage() {
                 ativo: true,
               };
               try {
+                setSalvandoConta(true);
+                setMessage(null);
+                setError(null);
                 await apiFetch("/financeiro/cartoes-contas", {
                   method: "POST",
                   body: JSON.stringify(body),
@@ -147,6 +160,8 @@ export default function FinanceiroPage() {
               } catch (err) {
                 setError(err instanceof Error ? err.message : "Erro ao salvar");
                 setMessage(null);
+              } finally {
+                setSalvandoConta(false);
               }
             }}
           >
@@ -181,9 +196,10 @@ export default function FinanceiroPage() {
             </div>
             <button
               type="submit"
-              className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300"
+              disabled={salvandoConta}
+              className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
             >
-              Salvar cartão/conta
+              {salvandoConta ? "Salvando..." : "Salvar cart?o/conta"}
             </button>
           </form>
         </div>

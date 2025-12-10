@@ -57,6 +57,31 @@ type EstoqueHistorico = {
   dataMudanca?: string;
 };
 
+type VendaDetalhe = {
+  id: string;
+  data?: string;
+  cliente?: { nome?: string | null } | null;
+  tipoPagamento?: { descricao?: string | null } | null;
+  parcelas?: number | null;
+  totalVenda?: number | null;
+  valorLiquido?: number | null;
+  status?: string | null;
+  observacoes?: string | null;
+  itens?: { id: string; qtde: number; precoUnit: number; subtotal: number; item?: { nome?: string | null; codigo?: string | null } }[];
+  recebimentos?: {
+    id: string;
+    parcelaNumero?: number | null;
+    valorBruto?: number;
+    valorLiquido?: number;
+    valorTaxa?: number;
+    dataPrevista?: string | null;
+    dataRecebida?: string | null;
+    status?: string;
+    cartaoConta?: { nome?: string | null } | null;
+    tipoPagamento?: { descricao?: string | null } | null;
+  }[];
+};
+
 const formatNumber = (n: number) =>
   new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 
@@ -82,7 +107,8 @@ export default function EstoquePage() {
   const [historicoCarregando, setHistoricoCarregando] = useState(false);
   const [detalheCompra, setDetalheCompra] = useState<CompraDetalhe | null>(null);
   const [carregandoCompra, setCarregandoCompra] = useState(false);
-  const [detalheVendaId, setDetalheVendaId] = useState<string | null>(null);
+  const [detalheVenda, setDetalheVenda] = useState<VendaDetalhe | null>(null);
+  const [carregandoVenda, setCarregandoVenda] = useState(false);
 
   const carregar = async () => {
     setCarregando(true);
@@ -196,6 +222,19 @@ export default function EstoquePage() {
       setErro(e instanceof Error ? e.message : "Erro ao carregar compra");
     } finally {
       setCarregandoCompra(false);
+    }
+  };
+
+  const abrirVenda = async (vendaId: string) => {
+    setDetalheVenda(null);
+    setCarregandoVenda(true);
+    try {
+      const venda = await apiFetch<VendaDetalhe>(`/vendas/${vendaId}`);
+      setDetalheVenda(venda ?? null);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao carregar venda");
+    } finally {
+      setCarregandoVenda(false);
     }
   };
 
@@ -498,7 +537,7 @@ export default function EstoquePage() {
                           {mov.vendaId && (
                             <button
                               type="button"
-                              onClick={() => setDetalheVendaId(mov.vendaId as string)}
+                              onClick={() => abrirVenda(mov.vendaId as string)}
                               className="inline-flex items-center gap-1 rounded-md bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
                               title="Ver detalhes da venda"
                             >
@@ -608,40 +647,129 @@ export default function EstoquePage() {
         </div>
       )}
 
-      {detalheVendaId && (
+      {(carregandoVenda || detalheVenda) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4">
-          <div className="w-full max-w-xl rounded-xl bg-slate-900 p-6 text-sm text-slate-200 ring-1 ring-slate-800">
+          <div className="w-full max-w-3xl rounded-xl bg-slate-900 p-6 text-sm text-slate-200 ring-1 ring-slate-800">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-base font-semibold text-slate-50">Detalhes da venda</p>
-                <p className="text-xs text-slate-400">ID: {detalheVendaId}</p>
+                {detalheVenda?.id && <p className="text-xs text-slate-400">ID: {detalheVenda.id}</p>}
               </div>
               <button
                 type="button"
-                onClick={() => setDetalheVendaId(null)}
+                onClick={() => {
+                  setDetalheVenda(null);
+                  setCarregandoVenda(false);
+                }}
                 className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
               >
                 Fechar
               </button>
             </div>
-            <p className="mt-4 text-slate-300">
-              Visualização detalhada de venda ainda não está disponível nesta tela.
-            </p>
-            <div className="mt-3 flex gap-2">
-              <a
-                href="/vendas"
-                className="rounded-lg bg-cyan-500 px-3 py-2 text-xs font-semibold text-slate-900 transition hover:bg-cyan-400"
-              >
-                Ir para Vendas
-              </a>
-              <button
-                type="button"
-                onClick={() => setDetalheVendaId(null)}
-                className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-              >
-                Fechar
-              </button>
-            </div>
+            {carregandoVenda ? (
+              <p className="mt-4 text-slate-300">Carregando venda...</p>
+            ) : detalheVenda ? (
+              <div className="mt-4 space-y-3">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs text-slate-400">Cliente</p>
+                    <p className="font-semibold text-slate-50">{detalheVenda.cliente?.nome ?? "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Pagamento</p>
+                    <p className="font-semibold text-slate-50">{detalheVenda.tipoPagamento?.descricao ?? "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Data</p>
+                    <p className="font-semibold text-slate-50">
+                      {detalheVenda.data ? detalheVenda.data.slice(0, 10) : "-"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400">Parcelas</p>
+                    <p className="font-semibold text-slate-50">{detalheVenda.parcelas ?? "-"}</p>
+                  </div>
+                </div>
+                <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                  <p className="text-xs text-slate-400">Total</p>
+                  <p className="text-lg font-semibold text-slate-50">
+                    {formatCurrencyBRL(Number(detalheVenda.totalVenda ?? 0))}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    Líquido: {formatCurrencyBRL(Number(detalheVenda.valorLiquido ?? detalheVenda.totalVenda ?? 0))}
+                  </p>
+                  <p className="text-xs text-slate-400 capitalize">Status: {detalheVenda.status ?? "-"}</p>
+                  {detalheVenda.observacoes && (
+                    <p className="mt-2 text-xs text-slate-400">Obs: {detalheVenda.observacoes}</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs text-slate-400">Itens</p>
+                  {detalheVenda.itens && detalheVenda.itens.length > 0 ? (
+                    <ul className="mt-2 space-y-2">
+                      {detalheVenda.itens.map((it) => (
+                        <li
+                          key={it.id}
+                          className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="font-semibold text-slate-50">
+                                {it.item?.nome ?? "-"} ({it.item?.codigo ?? ""})
+                              </p>
+                              <p className="text-xs text-slate-400">Qtd: {it.qtde}</p>
+                            </div>
+                            <div className="text-right text-xs text-slate-300">
+                              <div>Unit: {formatCurrencyBRL(Number(it.precoUnit ?? 0))}</div>
+                              <div>Total: {formatCurrencyBRL(Number(it.subtotal ?? 0))}</div>
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-slate-300">Nenhum item listado.</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs text-slate-400">Recebimentos</p>
+                  {detalheVenda.recebimentos && detalheVenda.recebimentos.length > 0 ? (
+                    <div className="mt-2 max-h-60 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+                      <table className="min-w-full text-xs text-slate-200">
+                        <thead className="bg-slate-900/70 text-left uppercase text-[11px] text-slate-400">
+                          <tr>
+                            <th className="px-3 py-2">Parcela</th>
+                            <th className="px-3 py-2">Prevista</th>
+                            <th className="px-3 py-2">Recebida</th>
+                            <th className="px-3 py-2 text-right">Bruto</th>
+                            <th className="px-3 py-2 text-right">Taxa</th>
+                            <th className="px-3 py-2 text-right">Líquido</th>
+                            <th className="px-3 py-2">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detalheVenda.recebimentos.map((r) => (
+                            <tr key={r.id} className="border-t border-slate-800">
+                              <td className="px-3 py-2">{r.parcelaNumero ?? "-"}</td>
+                              <td className="px-3 py-2">{r.dataPrevista ? r.dataPrevista.slice(0, 10) : "-"}</td>
+                              <td className="px-3 py-2">{r.dataRecebida ? r.dataRecebida.slice(0, 10) : "-"}</td>
+                              <td className="px-3 py-2 text-right">{formatCurrencyBRL(Number(r.valorBruto ?? 0))}</td>
+                              <td className="px-3 py-2 text-right">{formatCurrencyBRL(Number(r.valorTaxa ?? 0))}</td>
+                              <td className="px-3 py-2 text-right">{formatCurrencyBRL(Number(r.valorLiquido ?? 0))}</td>
+                              <td className="px-3 py-2 capitalize">{r.status ?? "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-slate-300">Nenhum recebimento listado.</p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-4 text-rose-200">Venda não encontrada.</p>
+            )}
           </div>
         </div>
       )}

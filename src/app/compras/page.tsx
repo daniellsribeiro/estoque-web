@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ProtectedShell } from "@/components/protected-shell";
 import { apiFetch } from "@/lib/api-client";
 
-type Supplier = { id: string; nome: string };
+type Supplier = { id: string; nome: string; principal?: boolean };
 type PaymentType = { id: string; descricao: string; parcelavel?: boolean; minParcelas?: number; maxParcelas?: number };
 type CardAccount = {
   id: string;
@@ -93,8 +93,10 @@ export default function ComprasPage() {
     email: "",
     endereco: "",
     observacoes: "",
+    principal: true,
   });
   const [salvandoFornecedor, setSalvandoFornecedor] = useState(false);
+  const [salvandoCompra, setSalvandoCompra] = useState(false);
 
   const [form, setForm] = useState({
     data: new Date().toISOString().slice(0, 10),
@@ -170,7 +172,8 @@ export default function ComprasPage() {
         apiFetch<Purchase[]>("/compras"),
         apiFetch<PurchasePayment[]>("/compras/pagamentos"),
       ]);
-      setSuppliers(forn || []);
+      const fornecedoresPrincipais = (forn ?? []).filter((f) => f.principal ?? true);
+      setSuppliers(fornecedoresPrincipais);
       setTypes(tp || []);
       setCards(ca || []);
       setProducts(prd || []);
@@ -220,18 +223,21 @@ export default function ComprasPage() {
         email: novoFornecedor.email.trim() || undefined,
         endereco: novoFornecedor.endereco.trim() || undefined,
         observacoes: novoFornecedor.observacoes.trim() || undefined,
+        principal: novoFornecedor.principal,
       };
       const criado = await apiFetch<Supplier>("/produtos/fornecedores", {
         method: "POST",
         body: JSON.stringify(body),
       });
       const lista = await apiFetch<Supplier[]>("/produtos/fornecedores");
-      setSuppliers(lista ?? []);
-      const novoId = criado?.id ?? lista?.find((s) => s.nome === body.nome)?.id ?? "";
+      const principais = (lista ?? []).filter((s) => s.principal ?? true);
+      setSuppliers(principais);
+      const isPrincipal = criado?.principal ?? novoFornecedor.principal;
+      const novoId = isPrincipal ? criado?.id ?? principais.find((s) => s.nome === body.nome)?.id ?? "" : "";
       setForm((p) => ({ ...p, fornecedorId: novoId || p.fornecedorId }));
       setShowSupplierModal(false);
       setFornecedorBusca("");
-      setNovoFornecedor({ nome: "", telefone: "", email: "", endereco: "", observacoes: "" });
+      setNovoFornecedor({ nome: "", telefone: "", email: "", endereco: "", observacoes: "", principal: true });
       setMessage("Fornecedor cadastrado com sucesso.");
       setError(null);
     } catch (err) {
@@ -242,6 +248,7 @@ export default function ComprasPage() {
   }
 
   async function handleSubmit(forceZero?: boolean) {
+    if (salvandoCompra) return;
     if (!form.fornecedorId || !form.tipoPagamentoId) {
       setError("Fornecedor e tipo de pagamento são obrigatórios.");
       return;
@@ -279,12 +286,20 @@ export default function ComprasPage() {
       })),
     };
 
-    await apiFetch("/compras", { method: "POST", body: JSON.stringify(body) });
-    setMessage("Compra registrada");
-    setError(null);
-    setItens([{ produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
-    setForm((p) => ({ ...p, total: "0,00", observacoes: "" }));
-    await loadAll();
+    try {
+      setSalvandoCompra(true);
+      setError(null);
+      await apiFetch("/compras", { method: "POST", body: JSON.stringify(body) });
+      setMessage("Compra registrada");
+      setItens([{ produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
+      setForm((p) => ({ ...p, total: "0,00", observacoes: "" }));
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar compra");
+      setMessage(null);
+    } finally {
+      setSalvandoCompra(false);
+    }
   }
 
   const parcelasSelecionadas = parcelasCompraId ? pagamentos.filter((p) => p.compra.id === parcelasCompraId) : [];
@@ -591,16 +606,11 @@ export default function ComprasPage() {
 
             <div className="mt-4 flex justify-end">
               <button
-                onClick={async () => {
-                  try {
-                    await handleSubmit();
-                  } catch (err) {
-                    setError(err instanceof Error ? err.message : "Erro ao salvar compra");
-                  }
-                }}
-                className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300"
+                onClick={() => void handleSubmit()}
+                disabled={salvandoCompra}
+                className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
               >
-                Salvar compra
+                {salvandoCompra ? "Salvando..." : "Salvar compra"}
               </button>
             </div>
           </div>
@@ -865,6 +875,15 @@ export default function ComprasPage() {
                 placeholder="Observações"
                 className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
               />
+              <label className="flex items-center gap-2 text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={novoFornecedor.principal}
+                  onChange={(e) => setNovoFornecedor((p) => ({ ...p, principal: e.target.checked }))}
+                  className="h-4 w-4 rounded border-slate-600 bg-slate-800 text-cyan-400 focus:ring-cyan-400"
+                />
+                <span>Fornecedor principal</span>
+              </label>
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
@@ -872,7 +891,7 @@ export default function ComprasPage() {
                 type="button"
                 onClick={() => {
                   setShowSupplierModal(false);
-                  setNovoFornecedor({ nome: "", telefone: "", email: "", endereco: "", observacoes: "" });
+                  setNovoFornecedor({ nome: "", telefone: "", email: "", endereco: "", observacoes: "", principal: true });
                 }}
                 className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-rose-500"
               >
@@ -915,17 +934,14 @@ export default function ComprasPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={async () => {
+                  onClick={() => {
                     setShowZeroModal(false);
-                    try {
-                      await handleSubmit(true);
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : "Erro ao salvar compra");
-                    }
+                    void handleSubmit(true);
                   }}
-                  className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-slate-900 transition hover:bg-amber-400"
+                  disabled={salvandoCompra}
+                  className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-slate-900 transition hover:bg-amber-400 disabled:opacity-60"
                 >
-                  Continuar com zero
+                  {salvandoCompra ? "Salvando..." : "Continuar com zero"}
                 </button>
               </div>
             </div>

@@ -11,6 +11,7 @@ type Supplier = {
   telefone?: string;
   email?: string;
   observacoes?: string;
+  principal?: boolean;
 };
 
 export default function FornecedoresPage() {
@@ -21,6 +22,8 @@ export default function FornecedoresPage() {
   const [editing, setEditing] = useState<Supplier | null>(null);
   const [novoTelefone, setNovoTelefone] = useState("");
   const [filter, setFilter] = useState("");
+  const [salvandoCadastro, setSalvandoCadastro] = useState(false);
+  const [salvandoEdicao, setSalvandoEdicao] = useState(false);
 
   const maskPhone = (value: string) => {
     const digits = value.replace(/\D/g, "").slice(0, 11);
@@ -47,42 +50,68 @@ export default function FornecedoresPage() {
   }, []);
 
   async function handleCreate(form: HTMLFormElement) {
+    if (salvandoCadastro) return;
     const fd = new FormData(form);
+    const principal = fd.get("principal") !== null;
     const body = {
       nome: fd.get("nome"),
       endereco: fd.get("endereco") || undefined,
       telefone: novoTelefone || undefined,
       email: fd.get("email") || undefined,
       observacoes: fd.get("observacoes") || undefined,
+      principal,
     };
-    await apiFetch("/produtos/fornecedores", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    await loadSuppliers();
-    form.reset();
-    setNovoTelefone("");
-    setMessage("Fornecedor cadastrado");
-    setError(null);
+    try {
+      setSalvandoCadastro(true);
+      setMessage(null);
+      setError(null);
+      await apiFetch("/produtos/fornecedores", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      await loadSuppliers();
+      form.reset();
+      setNovoTelefone("");
+      setMessage("Fornecedor cadastrado");
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar");
+      setMessage(null);
+      throw err;
+    } finally {
+      setSalvandoCadastro(false);
+    }
   }
 
   async function handleUpdate() {
-    if (!editing) return;
+    if (!editing || salvandoEdicao) return;
     const body = {
       nome: editing.nome,
       endereco: editing.endereco,
       telefone: editing.telefone,
       email: editing.email,
       observacoes: editing.observacoes,
+      principal: editing.principal ?? true,
     };
-    await apiFetch(`/produtos/fornecedores/${editing.id}`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    await loadSuppliers();
-    setEditing(null);
-    setMessage("Fornecedor atualizado");
-    setError(null);
+    try {
+      setSalvandoEdicao(true);
+      setMessage(null);
+      setError(null);
+      await apiFetch(`/produtos/fornecedores/${editing.id}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      await loadSuppliers();
+      setEditing(null);
+      setMessage("Fornecedor atualizado");
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar");
+      setMessage(null);
+      throw err;
+    } finally {
+      setSalvandoEdicao(false);
+    }
   }
 
   async function handleDelete(id: string) {
@@ -157,11 +186,21 @@ export default function FornecedoresPage() {
               placeholder="Observações"
               className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
             />
+            <label className="flex items-center gap-2 text-xs text-slate-300">
+              <input
+                type="checkbox"
+                name="principal"
+                defaultChecked
+                className="h-4 w-4 rounded border-slate-600 bg-slate-800 text-cyan-400 focus:ring-cyan-400"
+              />
+              <span>Fornecedor principal</span>
+            </label>
             <button
               type="submit"
-              className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300"
+              disabled={salvandoCadastro}
+              className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
             >
-              Salvar fornecedor
+              {salvandoCadastro ? "Salvando..." : "Salvar fornecedor"}
             </button>
           </form>
         </div>
@@ -218,7 +257,7 @@ export default function FornecedoresPage() {
                           <div className="flex justify-end gap-2">
                             <button
                               className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                              onClick={() => setEditing(s)}
+                              onClick={() => setEditing({ ...s, principal: s.principal ?? true })}
                             >
                               Editar
                             </button>
@@ -279,6 +318,15 @@ export default function FornecedoresPage() {
                   placeholder="Observações"
                   className="md:col-span-2 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
                 />
+                <label className="md:col-span-2 flex items-center gap-2 text-xs text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={editing.principal ?? true}
+                    onChange={(e) => setEditing({ ...editing, principal: e.target.checked })}
+                    className="h-4 w-4 rounded border-slate-600 bg-slate-800 text-cyan-400 focus:ring-cyan-400"
+                  />
+                  <span>Fornecedor principal</span>
+                </label>
               </div>
               <div className="mt-3 flex justify-end gap-2">
                 <button
@@ -295,9 +343,10 @@ export default function FornecedoresPage() {
                       setError(err instanceof Error ? err.message : "Erro ao salvar");
                     }
                   }}
-                  className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300"
+                  disabled={salvandoEdicao}
+                  className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
                 >
-                  Salvar
+                  {salvandoEdicao ? "Salvando..." : "Salvar"}
                 </button>
               </div>
             </div>

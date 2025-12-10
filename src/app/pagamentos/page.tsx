@@ -37,6 +37,17 @@ type CardRule = {
   prazoEscalonadoPadrao?: boolean;
 };
 
+type PurchaseDetail = {
+  id: string;
+  data?: string;
+  fornecedor?: { nome?: string | null } | null;
+  tipoPagamento?: { descricao?: string | null } | null;
+  totalCompra?: number | null;
+  status?: string | null;
+  parcelas?: number | null;
+  itens?: { id: string; qtde: number; valorUnit: number; valorTotal: number; item?: { nome?: string | null; codigo?: string | null } }[];
+};
+
 type PurchasePayment = {
   id: string;
   nParcela: number;
@@ -46,6 +57,25 @@ type PurchasePayment = {
   dataPagamento?: string | null;
   cartaoConta?: { id: string; nome: string };
   tipoPagamento?: { id: string; descricao: string };
+  compra?: { id: string };
+};
+
+const getCardId = (p: PurchasePayment): string | null => {
+  const cc = p.cartaoConta;
+  if (typeof cc === "string") return cc;
+  if (cc && typeof cc === "object" && "id" in cc && typeof cc.id === "string") return cc.id;
+  return null;
+};
+
+const getTipoDesc = (p: PurchasePayment): string => {
+  const tp = p.tipoPagamento;
+  const raw =
+    typeof tp === "string"
+      ? tp
+      : tp && typeof tp === "object" && "descricao" in tp && typeof tp.descricao === "string"
+        ? tp.descricao
+        : "";
+  return String(raw || "").toLowerCase();
 };
 
 const Help = ({ title }: { title: string }) => (
@@ -99,6 +129,13 @@ export default function PagamentosPage() {
   const [selectedCard, setSelectedCard] = useState<string>("");
   const [rules, setRules] = useState<Record<string, CardRule>>({});
   const [editingRules, setEditingRules] = useState<Record<string, boolean>>({});
+  const [salvandoCard, setSalvandoCard] = useState(false);
+  const [salvandoRegra, setSalvandoRegra] = useState<Record<string, boolean>>({});
+  const [salvandoFatura, setSalvandoFatura] = useState(false);
+  const [cardInfoModal, setCardInfoModal] = useState<CardAccount | null>(null);
+  const [compraInfo, setCompraInfo] = useState<{ id: string; loading: boolean; data: PurchaseDetail | null } | null>(
+    null,
+  );
   const [selectedCardExtract, setSelectedCardExtract] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>(formatMonth());
   const [paymentTypeFilter, setPaymentTypeFilter] = useState<string>("");
@@ -157,37 +194,28 @@ export default function PagamentosPage() {
   }, [selectedCard]);
 
   const marcarFaturaPaga = async () => {
-    if (!selectedCardExtract || !selectedMonth) return;
-    await apiFetch("/financeiro/cartoes-contas/pagamentos", {
-      method: "POST",
-      body: JSON.stringify({
-        cartaoContaId: selectedCardExtract,
-        mesReferencia: selectedMonth,
-        dataPagamentoReal: new Date().toISOString(),
-      }),
-    });
-    setMessage("Fatura marcada como paga");
-    await loadAll();
+    if (!selectedCardExtract || !selectedMonth || salvandoFatura) return;
+    try {
+      setSalvandoFatura(true);
+      setError(null);
+      await apiFetch("/financeiro/cartoes-contas/pagamentos", {
+        method: "POST",
+        body: JSON.stringify({
+          cartaoContaId: selectedCardExtract,
+          mesReferencia: selectedMonth,
+          dataPagamentoReal: new Date().toISOString(),
+        }),
+      });
+      setMessage("Fatura marcada como paga");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao marcar pagamento");
+    } finally {
+      setSalvandoFatura(false);
+    }
   };
 
   const pagamentosFiltrados = useMemo(() => {
-    const getCardId = (p: PurchasePayment): string | null => {
-      const cc = p.cartaoConta;
-      if (typeof cc === "string") return cc;
-      if (cc && typeof cc === "object" && "id" in cc && typeof cc.id === "string") return cc.id;
-      return null;
-    };
-    const getTipoDesc = (p: PurchasePayment): string => {
-      const tp = p.tipoPagamento;
-      const raw =
-        typeof tp === "string"
-          ? tp
-          : tp && typeof tp === "object" && "descricao" in tp && typeof tp.descricao === "string"
-            ? tp.descricao
-            : "";
-      return String(raw || "").toLowerCase();
-    };
-
     return pagamentos.filter((p) => {
       const cardId = getCardId(p);
       if (!cardId || cardId !== selectedCardExtract) return false;
@@ -211,8 +239,25 @@ export default function PagamentosPage() {
     return { total, pago, pendente: total - pago };
   }, [pagamentosFiltrados]);
   const temPendencias = resumoPagamentos.pendente > 0;
+  const pagamentosDoCartaoModal = useMemo(
+    () => (cardInfoModal ? pagamentos.filter((p) => getCardId(p) === cardInfoModal.id) : []),
+    [cardInfoModal, pagamentos],
+  );
+
+  const abrirCompraInfo = async (compraId: string) => {
+    setCompraInfo({ id: compraId, loading: true, data: null });
+    try {
+      const data = await apiFetch<PurchaseDetail>(`/compras/${compraId}`);
+      setCompraInfo({ id: compraId, loading: false, data: data ?? null });
+      setError(null);
+    } catch (err) {
+      setCompraInfo((prev) => (prev ? { ...prev, loading: false } : prev));
+      setError(err instanceof Error ? err.message : "Erro ao carregar compra");
+    }
+  };
 
   async function handleCreateCard() {
+    if (salvandoCard) return;
     const payload = {
       nome: cardForm.nome,
       banco: cardForm.banco,
@@ -222,43 +267,60 @@ export default function PagamentosPage() {
       pixChave: cardForm.pixChave,
       ativo: cardForm.ativo ?? true,
     };
-    if (editingCardId) {
-      await apiFetch(`/financeiro/cartoes-contas/${editingCardId}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      });
-      setMessage("Cartão/conta atualizado");
-    } else {
-      await apiFetch("/financeiro/cartoes-contas", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      setMessage("Cartão/conta cadastrado");
+    try {
+      setSalvandoCard(true);
+      setError(null);
+      setMessage(null);
+      if (editingCardId) {
+        await apiFetch(`/financeiro/cartoes-contas/${editingCardId}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+        setMessage("Cart?o/conta atualizado");
+      } else {
+        await apiFetch("/financeiro/cartoes-contas", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        setMessage("Cart?o/conta cadastrado");
+      }
+      setCardForm({ ativo: true });
+      setEditingCardId(null);
+      setShowCardForm(false);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar cart?o/conta");
+    } finally {
+      setSalvandoCard(false);
     }
-    setCardForm({ ativo: true });
-    setEditingCardId(null);
-    setShowCardForm(false);
-    await loadAll();
   }
 
   const handleSaveRule = async (tipo: string) => {
     const r = rules[tipo];
-    if (!selectedCard || !r) return;
-    await apiFetch("/financeiro/cartoes-contas/regras", {
-      method: "POST",
-      body: JSON.stringify({
-        cartaoId: selectedCard,
-        tipo,
-        taxaPercentual: Number(r.taxaPercentual ?? 0),
-        taxaFixa: Number(r.taxaFixa ?? 0),
-        adicionalParcela: Number(r.adicionalParcela ?? 0),
-        prazoRecebimentoDias: Number(r.prazoRecebimentoDias ?? 0),
-        prazoEscalonadoPadrao: r.prazoEscalonadoPadrao ?? false,
-      }),
-    });
-    setEditingRules((prev) => ({ ...prev, [tipo]: false }));
-    setMessage("Regra salva");
-    await loadRules(selectedCard);
+    if (!selectedCard || !r || salvandoRegra[tipo]) return;
+    try {
+      setSalvandoRegra((prev) => ({ ...prev, [tipo]: true }));
+      setError(null);
+      await apiFetch("/financeiro/cartoes-contas/regras", {
+        method: "POST",
+        body: JSON.stringify({
+          cartaoId: selectedCard,
+          tipo,
+          taxaPercentual: Number(r.taxaPercentual ?? 0),
+          taxaFixa: Number(r.taxaFixa ?? 0),
+          adicionalParcela: Number(r.adicionalParcela ?? 0),
+          prazoRecebimentoDias: Number(r.prazoRecebimentoDias ?? 0),
+          prazoEscalonadoPadrao: r.prazoEscalonadoPadrao ?? false,
+        }),
+      });
+      setEditingRules((prev) => ({ ...prev, [tipo]: false }));
+      setMessage("Regra salva");
+      await loadRules(selectedCard);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar regra");
+    } finally {
+      setSalvandoRegra((prev) => ({ ...prev, [tipo]: false }));
+    }
   };
 
   return (
@@ -349,16 +411,11 @@ export default function PagamentosPage() {
               />
               <div className="flex gap-2 lg:col-span-2">
                 <button
-                  onClick={async () => {
-                    try {
-                      await handleCreateCard();
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : "Erro ao salvar cartao/conta");
-                    }
-                  }}
-                  className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300"
+                  onClick={() => void handleCreateCard()}
+                  disabled={salvandoCard}
+                  className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
                 >
-                  {editingCardId ? "Atualizar" : "Salvar"} cartao/conta
+                  {salvandoCard ? "Salvando..." : editingCardId ? "Atualizar" : "Salvar"} cartao/conta
                 </button>
                 <button
                   onClick={() => {
@@ -401,28 +458,34 @@ export default function PagamentosPage() {
                         <td className="px-4 py-2">{c.pixChave ?? "-"}</td>
                         <td className="px-4 py-2">
                           <button
-                            className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                            onClick={() => {
-                              setCardForm({
-                                nome: c.nome,
-                                banco: c.banco,
-                                bandeira: c.bandeira,
-                                diaFechamento: c.diaFechamento,
-                                diaVencimento: c.diaVencimento,
-                                pixChave: c.pixChave,
-                                ativo: c.ativo,
-                              });
-                              setEditingCardId(c.id);
-                              setShowCardForm(true);
-                            }}
-                          >
-                            Editar
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                        onClick={() => {
+                          setCardForm({
+                            nome: c.nome,
+                            banco: c.banco,
+                            bandeira: c.bandeira,
+                            diaFechamento: c.diaFechamento,
+                            diaVencimento: c.diaVencimento,
+                            pixChave: c.pixChave,
+                            ativo: c.ativo,
+                          });
+                          setEditingCardId(c.id);
+                          setShowCardForm(true);
+                        }}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="ml-2 rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                        onClick={() => setCardInfoModal(c)}
+                      >
+                        Compras
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
               )}
             </div>
           )}
@@ -458,6 +521,7 @@ export default function PagamentosPage() {
                       prazoRecebimentoDias: 0,
                     };
                     const isEditing = editingRules[rt.key] ?? false;
+                    const isSaving = salvandoRegra[rt.key] ?? false;
                     return (
                       <div key={rt.key} className="rounded-lg border border-slate-800 bg-slate-900/70 p-3">
                         <div className="flex items-center justify-between gap-2">
@@ -476,10 +540,10 @@ export default function PagamentosPage() {
                             </button>
                             <button
                               className="rounded-lg bg-cyan-400 px-3 py-1 text-xs font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-50"
-                              onClick={() => handleSaveRule(rt.key)}
-                              disabled={!isEditing}
+                              onClick={() => void handleSaveRule(rt.key)}
+                              disabled={!isEditing || isSaving}
                             >
-                              Salvar
+                              {isSaving ? "Salvando..." : "Salvar"}
                             </button>
                           </div>
                         </div>
@@ -674,29 +738,39 @@ export default function PagamentosPage() {
               <div className="p-3 text-slate-400">Nenhuma parcela neste mês/cartão.</div>
             )}
             {selectedCardExtract && selectedMonth && pagamentosFiltrados.length > 0 && (
-              <table className="min-w-full">
-                <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
-                  <tr>
-                    <th className="px-4 py-2">Parcela</th>
-                    <th className="px-4 py-2">Vencimento</th>
-                    <th className="px-4 py-2">Valor</th>
-                    <th className="px-4 py-2">Tipo</th>
-                    <th className="px-4 py-2">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pagamentosFiltrados.map((p) => (
-                    <tr key={p.id} className="border-t border-slate-800">
-                      <td className="px-4 py-2">{p.nParcela}</td>
-                      <td className="px-4 py-2">{p.dataVencimento ? p.dataVencimento.slice(0, 10) : "-"}</td>
-                      <td className="px-4 py-2">R$ {Number(p.valorParcela || 0).toFixed(2)}</td>
-                      <td className="px-4 py-2">{p.tipoPagamento?.descricao ?? "-"}</td>
-                      <td className="px-4 py-2 capitalize">{p.statusPagamento}</td>
+                <table className="min-w-full">
+                  <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
+                    <tr>
+                      <th className="px-4 py-2">Parcela</th>
+                      <th className="px-4 py-2">Vencimento</th>
+                      <th className="px-4 py-2">Valor</th>
+                      <th className="px-4 py-2">Tipo</th>
+                      <th className="px-4 py-2">Status</th>
+                      <th className="px-4 py-2 text-right">Ações</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                  </thead>
+                  <tbody>
+                    {pagamentosFiltrados.map((p) => (
+                      <tr key={p.id} className="border-t border-slate-800">
+                        <td className="px-4 py-2">{p.nParcela}</td>
+                        <td className="px-4 py-2">{p.dataVencimento ? p.dataVencimento.slice(0, 10) : "-"}</td>
+                        <td className="px-4 py-2">R$ {Number(p.valorParcela || 0).toFixed(2)}</td>
+                        <td className="px-4 py-2">{p.tipoPagamento?.descricao ?? "-"}</td>
+                        <td className="px-4 py-2 capitalize">{p.statusPagamento}</td>
+                        <td className="px-4 py-2 text-right">
+                          <button
+                            className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50"
+                            disabled={!p.compra?.id}
+                            onClick={() => p.compra?.id && void abrirCompraInfo(p.compra.id)}
+                          >
+                            Ver compra
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
           </div>
 
           {selectedCardExtract && selectedMonth && (
@@ -708,10 +782,11 @@ export default function PagamentosPage() {
               </div>
               {temPendencias ? (
                 <button
-                  className="rounded-lg bg-cyan-400 px-4 py-2 text-xs font-semibold text-slate-900 transition hover:bg-cyan-300"
-                  onClick={marcarFaturaPaga}
+                  className="rounded-lg bg-cyan-400 px-4 py-2 text-xs font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
+                  onClick={() => void marcarFaturaPaga()}
+                  disabled={salvandoFatura}
                 >
-                  Marcar mês como pago
+                  {salvandoFatura ? "Salvando..." : "Marcar m?s como pago"}
                 </button>
               ) : (
                 <div className="rounded-lg bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-500/30">
@@ -724,7 +799,149 @@ export default function PagamentosPage() {
           )}
         </div>
       </div>
+
+      {cardInfoModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4 backdrop-blur">
+          <div className="w-full max-w-3xl rounded-xl bg-slate-900 p-6 text-sm text-slate-200 ring-1 ring-slate-800 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-base font-semibold text-slate-50">Compras neste cartao/conta</h4>
+                <p className="text-xs text-slate-400">{cardInfoModal.nome}</p>
+              </div>
+              <button
+                className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                onClick={() => setCardInfoModal(null)}
+              >
+                Fechar
+              </button>
+            </div>
+            <div className="mt-4 max-h-[420px] overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+              {pagamentosDoCartaoModal.length === 0 ? (
+                <div className="p-3 text-slate-400">Nenhuma compra registrada neste cartao/conta.</div>
+              ) : (
+                <table className="min-w-full">
+                  <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
+                    <tr>
+                      <th className="px-4 py-2">Parcela</th>
+                      <th className="px-4 py-2">Vencimento</th>
+                      <th className="px-4 py-2">Valor</th>
+                      <th className="px-4 py-2">Tipo</th>
+                      <th className="px-4 py-2">Status</th>
+                      <th className="px-4 py-2 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagamentosDoCartaoModal.map((p) => (
+                      <tr key={p.id} className="border-t border-slate-800">
+                        <td className="px-4 py-2">{p.nParcela}</td>
+                        <td className="px-4 py-2">{p.dataVencimento ? p.dataVencimento.slice(0, 10) : "-"}</td>
+                        <td className="px-4 py-2">R$ {Number(p.valorParcela || 0).toFixed(2)}</td>
+                        <td className="px-4 py-2">{p.tipoPagamento?.descricao ?? "-"}</td>
+                        <td className="px-4 py-2 capitalize">{p.statusPagamento}</td>
+                        <td className="px-4 py-2 text-right">
+                          <button
+                            className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50"
+                            disabled={!p.compra?.id}
+                            onClick={() => p.compra?.id && void abrirCompraInfo(p.compra.id)}
+                          >
+                            Ver compra
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {compraInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 px-4 backdrop-blur">
+          <div className="w-full max-w-3xl rounded-xl bg-slate-900 p-5 text-sm text-slate-200 ring-1 ring-slate-800 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-base font-semibold text-slate-50">Detalhes da compra</h4>
+                <p className="text-xs text-slate-400">ID: {compraInfo.id}</p>
+              </div>
+              <button
+                className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                onClick={() => setCompraInfo(null)}
+              >
+                Fechar
+              </button>
+            </div>
+
+            {compraInfo.loading ? (
+              <div className="mt-4 text-slate-300">Carregando...</div>
+            ) : compraInfo.data ? (
+              <div className="mt-4 space-y-3">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Fornecedor</p>
+                    <p className="font-semibold text-slate-50">{compraInfo.data.fornecedor?.nome ?? "-"}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Tipo de pagamento</p>
+                    <p className="font-semibold text-slate-50">{compraInfo.data.tipoPagamento?.descricao ?? "-"}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Data</p>
+                    <p className="font-semibold text-slate-50">
+                      {compraInfo.data.data ? compraInfo.data.data.slice(0, 10) : "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Parcelas</p>
+                    <p className="font-semibold text-slate-50">{compraInfo.data.parcelas ?? "-"}</p>
+                  </div>
+                </div>
+                <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                  <p className="text-xs text-slate-400">Total</p>
+                  <p className="text-lg font-semibold text-slate-50">
+                    R$ {Number(compraInfo.data.totalCompra || 0).toFixed(2)}
+                  </p>
+                  <p className="text-xs text-slate-400 capitalize">Status: {compraInfo.data.status ?? "-"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-400">Itens</p>
+                  {compraInfo.data.itens && compraInfo.data.itens.length > 0 ? (
+                    <div className="mt-2 max-h-60 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
+                          <tr>
+                            <th className="px-3 py-2">Produto</th>
+                            <th className="px-3 py-2 text-right">Qtd</th>
+                            <th className="px-3 py-2 text-right">Unit</th>
+                            <th className="px-3 py-2 text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {compraInfo.data.itens.map((it) => (
+                            <tr key={it.id} className="border-t border-slate-800">
+                              <td className="px-3 py-2">
+                                {it.item?.nome ?? "-"} {it.item?.codigo ? `(${it.item.codigo})` : ""}
+                              </td>
+                              <td className="px-3 py-2 text-right">{it.qtde}</td>
+                              <td className="px-3 py-2 text-right">R$ {Number(it.valorUnit || 0).toFixed(2)}</td>
+                              <td className="px-3 py-2 text-right">R$ {Number(it.valorTotal || 0).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-slate-300">Nenhum item listado.</p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 text-rose-200">Compra não encontrada.</div>
+            )}
+          </div>
+        </div>
+      )}
     </ProtectedShell>
   );
 }
-
