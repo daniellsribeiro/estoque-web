@@ -179,11 +179,13 @@ export default function PagamentosPage() {
     };
     const getTipoDesc = (p: PurchasePayment): string => {
       const tp = p.tipoPagamento;
-      if (typeof tp === "string") return tp.toLowerCase();
-      if (tp && typeof tp === "object" && "descricao" in tp && typeof tp.descricao === "string") {
-        return tp.descricao.toLowerCase();
-      }
-      return "";
+      const raw =
+        typeof tp === "string"
+          ? tp
+          : tp && typeof tp === "object" && "descricao" in tp && typeof tp.descricao === "string"
+            ? tp.descricao
+            : "";
+      return String(raw || "").toLowerCase();
     };
 
     return pagamentos.filter((p) => {

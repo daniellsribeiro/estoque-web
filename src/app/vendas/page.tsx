@@ -55,7 +55,7 @@ type Recebimento = {
   valorBruto: number;
   valorLiquido: number;
   valorTaxa: number;
-  dataPrevista: string;
+  dataPrevista?: string | null;
   dataRecebida?: string | null;
   status: string;
   tipoPagamento?: PaymentType | null;
@@ -82,11 +82,15 @@ const parseCurrency = (value: string) => {
   return cents / 100;
 };
 
-const todayLocal = () => {
-  const now = new Date();
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
+const isoDateInTimeZone = (date: Date, timeZone = "America/Sao_Paulo") => {
+  const inTz = new Date(date.toLocaleString("en-US", { timeZone }));
+  const year = inTz.getFullYear();
+  const month = String(inTz.getMonth() + 1).padStart(2, "0");
+  const day = String(inTz.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 };
+
+const todayLocal = () => isoDateInTimeZone(new Date());
 
 const onlyNumbers = (value: string) => value.replace(/[^0-9]/g, "");
 const maskPhone = (value: string) => {
@@ -324,19 +328,13 @@ export default function VendasPage() {
   const statusLabel = (r: Recebimento) => {
     if (r.status === "cancelado") return "Cancelado";
     const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
     const prevista = r.dataPrevista ? new Date(r.dataPrevista) : null;
-    if (r.status === "recebido") {
-      if (prevista && hoje < prevista) return "Pago";
-      return "Recebido";
-    }
-    if (r.status === "previsto") {
-      if (r.dataRecebida) {
-        if (prevista && hoje >= prevista) return "Recebido";
-        return "Pago";
-      }
-      return "Pendente";
-    }
-    return "Pendente";
+    if (prevista) prevista.setHours(0, 0, 0, 0);
+    const recebeu = !!r.dataRecebida;
+    if (!recebeu) return prevista ? (hoje >= prevista ? "Recebido" : "Pendente") : "Pendente";
+    if (prevista && hoje < prevista) return "Pago";
+    return "Recebido";
   };
 
   const detalheStatus = useMemo(() => {
@@ -477,6 +475,21 @@ useEffect(() => {
     setItens((current) => current.map((it, idx) => (idx === index ? { ...it, ...patch } : it)));
   };
 
+  const handleChangeTipoPagamento = (tipoPagamentoId: string) => {
+    setForm((p) => ({
+      ...p,
+      tipoPagamentoId,
+      cartaoContaId: "",
+      regraId: "",
+      usarEscalonado: false,
+      prazoDias: "",
+      parcelas: 1,
+    }));
+    setParcelasInput("1");
+    setCardRules([]);
+    setErro(null);
+  };
+
   const adicionarItem = () => setItens((prev) => [...prev, { produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
   const removerItem = (index: number) => setItens((prev) => prev.filter((_, idx) => idx !== index));
 
@@ -559,7 +572,6 @@ useEffect(() => {
       setItens([{ produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
       setForm((prev) => ({
         ...prev,
-        data: todayLocal(),
         frete: "0,00",
         desconto: "0,00",
         observacoes: "",
@@ -660,7 +672,7 @@ useEffect(() => {
       setClientes((prev) => [...prev, clienteCriado]);
       setForm((p) => ({ ...p, clienteId: clienteCriado.id }));
       setShowClienteModal(false);
-      setNovoCliente({ nome: "", telefone: "", email: "" });
+      setNovoCliente({ nome: "", telefone: "", email: "", observacoes: "" });
       setMensagem("Cliente adicionado com sucesso.");
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao salvar cliente");
@@ -752,7 +764,7 @@ useEffect(() => {
               <span className="text-slate-300">Forma de pagamento</span>
               <select
                 value={form.tipoPagamentoId}
-                onChange={(e) => setForm((p) => ({ ...p, tipoPagamentoId: e.target.value }))}
+                onChange={(e) => handleChangeTipoPagamento(e.target.value)}
                 className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
               >
                 <option value="">Selecione</option>
@@ -1041,15 +1053,20 @@ useEffect(() => {
                       >
                         Detalhes
                       </button>
-                      {v.status !== "paga" && v.status !== "recebido" && v.status !== "cancelada" && v.status !== "cancelado" && (
+                      {!["paga", "pago", "recebido", "cancelada", "cancelado"].includes(v.status) && (
                         <div className="mt-2 flex items-center justify-center gap-2">
                           <button
                             type="button"
-                            onClick={() => setPayModal({ id: v.id, data: todayLocal() })}
-                            className="rounded-lg border border-emerald-500 px-2 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-500 hover:text-slate-900"
-                          >
-                            Marcar pago
-                          </button>
+                          onClick={() => {
+                            const todaySp = todayLocal();
+                            const saleDateStr = v.data ? v.data.slice(0, 10) : todaySp;
+                            const defaultDate = saleDateStr > todaySp ? saleDateStr : todaySp;
+                            setPayModal({ id: v.id, data: defaultDate });
+                          }}
+                          className="rounded-lg border border-emerald-500 px-2 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-500 hover:text-slate-900"
+                        >
+                          Marcar pago
+                        </button>
                           <button
                             type="button"
                             onClick={() => void cancelarVenda(v.id)}
@@ -1077,8 +1094,8 @@ useEffect(() => {
       </div>
 
       {payModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4 backdrop-blur">
-          <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-950 p-5">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/80 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-emerald-700/60 bg-slate-950 p-5 max-h-[90vh] overflow-y-auto shadow-2xl scroll-soft">
             <h4 className="text-lg font-semibold text-slate-50">Marcar venda como paga</h4>
             <p className="text-sm text-slate-400">Informe a data do pagamento.</p>
             <div className="mt-3 space-y-2 text-sm text-slate-200">
@@ -1087,7 +1104,24 @@ useEffect(() => {
                 <input
                   type="date"
                   value={payModal.data}
-                  onChange={(e) => setPayModal((p) => (p ? { ...p, data: e.target.value } : p))}
+                  min={(() => {
+                const sale = vendas.find((ven) => ven.id === payModal.id) || (detalhe?.id === payModal.id ? detalhe : null);
+                const saleDate = sale?.data ? sale.data.slice(0, 10) : undefined;
+                return saleDate;
+              })()}
+              onChange={(e) => {
+                const minDate = (() => {
+                  const sale = vendas.find((ven) => ven.id === payModal.id) || (detalhe?.id === payModal.id ? detalhe : null);
+                  const saleDate = sale?.data ? sale.data.slice(0, 10) : undefined;
+                  return saleDate;
+                })();
+                const value = e.target.value;
+                if (minDate && value < minDate) {
+                  setPayModal((p) => (p ? { ...p, data: minDate } : p));
+                } else {
+                  setPayModal((p) => (p ? { ...p, data: value } : p));
+                }
+              }}
                   className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-emerald-500"
                 />
               </label>
@@ -1114,7 +1148,7 @@ useEffect(() => {
 
       {detalhe && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4 backdrop-blur">
-          <div className="w-full max-w-5xl rounded-xl border border-slate-800 bg-slate-950 p-6 shadow-xl">
+          <div className="w-full max-w-5xl rounded-xl border border-slate-800 bg-slate-950 p-6 shadow-xl max-h-[90vh] overflow-y-auto scroll-soft">
             <div className="flex items-center justify-between">
               <div>
                 <h4 className="text-lg font-semibold text-slate-50">Detalhes da venda</h4>
@@ -1123,11 +1157,16 @@ useEffect(() => {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {detalhe.status !== "paga" && detalhe.status !== "recebido" && detalhe.status !== "cancelada" && detalhe.status !== "cancelado" && (
+                {!["paga", "pago", "recebido", "cancelada", "cancelado"].includes(detalhe.status) && (
                   <>
                     <button
                       type="button"
-                      onClick={() => setPayModal({ id: detalhe.id, data: todayLocal() })}
+                      onClick={() => {
+                        const todaySp = todayLocal();
+                        const saleDateStr = detalhe.data ? detalhe.data.slice(0, 10) : todaySp;
+                        const defaultDate = saleDateStr > todaySp ? saleDateStr : todaySp;
+                        setPayModal({ id: detalhe.id, data: defaultDate });
+                      }}
                       className="rounded-lg border border-emerald-500 px-3 py-1 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500 hover:text-slate-900"
                     >
                       Marcar pago
@@ -1206,10 +1245,16 @@ useEffect(() => {
                       >
                         <div>
                           <div className="font-semibold text-slate-100">Parcela {r.parcelaNumero}</div>
-                          <div className="text-xs text-slate-400">
-                            Prevista: {new Date(r.dataPrevista).toLocaleDateString()}
-                            {r.dataRecebida ? ` - Recebida: ${new Date(r.dataRecebida).toLocaleDateString()}` : ""}
-                          </div>
+                          {(r.dataPrevista || r.dataRecebida) && (
+                            <div className="text-xs text-slate-400">
+                              {[
+                                r.dataPrevista ? `Prevista: ${new Date(r.dataPrevista).toLocaleDateString()}` : null,
+                                r.dataRecebida ? `Recebida: ${new Date(r.dataRecebida).toLocaleDateString()}` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" - ")}
+                            </div>
+                          )}
                           <div className="text-xs text-slate-400">
                             {r.cartaoConta?.nome ? `Cartao: ${r.cartaoConta.nome}` : ""} {r.tipoPagamento?.descricao || ""}
                           </div>
@@ -1218,7 +1263,7 @@ useEffect(() => {
                         <div className="text-xs text-slate-400">Bruto: R$ {r.valorBruto.toFixed(2)}</div>
                         <div className="text-xs text-slate-400">Taxa: R$ {r.valorTaxa.toFixed(2)}</div>
                         <div className="font-semibold text-emerald-300">Liquido: R$ {r.valorLiquido.toFixed(2)}</div>
-                        <div className="text-[11px] text-slate-400">{statusLabel(r)}</div>
+                        <div className="text-[11px] text-slate-400">{r.status}</div>
                       </div>
                     </div>
                   ))}
@@ -1283,7 +1328,7 @@ useEffect(() => {
                 type="button"
                 onClick={() => {
                   setShowClienteModal(false);
-                  setNovoCliente({ nome: "", telefone: "", email: "" });
+                  setNovoCliente({ nome: "", telefone: "", email: "", observacoes: "" });
                 }}
                 className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-rose-500"
               >

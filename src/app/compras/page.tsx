@@ -57,6 +57,14 @@ const parseCurrency = (value: string) => {
 };
 
 const onlyNumbers = (value: string) => value.replace(/[^0-9]/g, "");
+const maskPhone = (value: string) => {
+  const digits = value.replace(/\D/g, "").slice(0, 11);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+};
+const isValidEmail = (email: string) => /^\S+@\S+\.\S+$/.test(email);
 
 type ItemInput = { produtoId: string; qtde: string; valorUnit: string; search: string };
 
@@ -77,6 +85,16 @@ export default function ComprasPage() {
   const [filtroTipo, setFiltroTipo] = useState("");
   const [filtroCor, setFiltroCor] = useState("");
   const [filtroMaterial, setFiltroMaterial] = useState("");
+  const [fornecedorBusca, setFornecedorBusca] = useState("");
+  const [showSupplierModal, setShowSupplierModal] = useState(false);
+  const [novoFornecedor, setNovoFornecedor] = useState({
+    nome: "",
+    telefone: "",
+    email: "",
+    endereco: "",
+    observacoes: "",
+  });
+  const [salvandoFornecedor, setSalvandoFornecedor] = useState(false);
 
   const [form, setForm] = useState({
     data: new Date().toISOString().slice(0, 10),
@@ -135,6 +153,11 @@ export default function ComprasPage() {
     });
     return Array.from(map.values());
   }, [products]);
+  const fornecedoresFiltrados = useMemo(() => {
+    const term = fornecedorBusca.trim().toLowerCase();
+    if (!term) return suppliers;
+    return suppliers.filter((f) => f.nome.toLowerCase().includes(term));
+  }, [fornecedorBusca, suppliers]);
 
   const loadAll = async () => {
     try {
@@ -178,6 +201,45 @@ export default function ComprasPage() {
       tipoPagamentoId: p.tipoPagamentoId || types[0]?.id || "",
     }));
   }, [suppliers, types]);
+
+  async function salvarFornecedor() {
+    if (!novoFornecedor.nome.trim()) {
+      setError("Informe o nome do fornecedor.");
+      return;
+    }
+    if (novoFornecedor.email && !isValidEmail(novoFornecedor.email)) {
+      setError("Email inválido.");
+      return;
+    }
+    setSalvandoFornecedor(true);
+    setMessage(null);
+    try {
+      const body = {
+        nome: novoFornecedor.nome.trim(),
+        telefone: novoFornecedor.telefone.trim() || undefined,
+        email: novoFornecedor.email.trim() || undefined,
+        endereco: novoFornecedor.endereco.trim() || undefined,
+        observacoes: novoFornecedor.observacoes.trim() || undefined,
+      };
+      const criado = await apiFetch<Supplier>("/produtos/fornecedores", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      const lista = await apiFetch<Supplier[]>("/produtos/fornecedores");
+      setSuppliers(lista ?? []);
+      const novoId = criado?.id ?? lista?.find((s) => s.nome === body.nome)?.id ?? "";
+      setForm((p) => ({ ...p, fornecedorId: novoId || p.fornecedorId }));
+      setShowSupplierModal(false);
+      setFornecedorBusca("");
+      setNovoFornecedor({ nome: "", telefone: "", email: "", endereco: "", observacoes: "" });
+      setMessage("Fornecedor cadastrado com sucesso.");
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar fornecedor");
+    } finally {
+      setSalvandoFornecedor(false);
+    }
+  }
 
   async function handleSubmit(forceZero?: boolean) {
     if (!form.fornecedorId || !form.tipoPagamentoId) {
@@ -270,90 +332,127 @@ export default function ComprasPage() {
                 )}
               </div>
             </div>
+            <div className="mt-3 space-y-3 text-sm">
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-xs text-slate-400">Data</span>
+                  <input
+                    type="date"
+                    value={form.data}
+                    onChange={(e) => setForm((p) => ({ ...p, data: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-slate-400">Valor total (considera taxas do crédito)</span>
+                  <input
+                    value={form.total}
+                    onChange={(e) => setForm((p) => ({ ...p, total: formatCurrency(e.target.value) }))}
+                    placeholder="Valor total (R$)"
+                    inputMode="decimal"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                  />
+                </label>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 items-end">
+                <label className="space-y-1">
+                  <span className="text-xs text-slate-400">Meio de pagamento</span>
+                  <select
+                    value={form.tipoPagamentoId}
+                    onChange={(e) => setForm((p) => ({ ...p, tipoPagamentoId: e.target.value, cartaoContaId: "" }))}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                  >
+                    <option value="">Selecione</option>
+                    {types.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.descricao}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="space-y-1">
+                  <span className="text-xs text-slate-400">Cartão/Conta</span>
+                  <select
+                    value={form.cartaoContaId}
+                    onChange={(e) => setForm((p) => ({ ...p, cartaoContaId: e.target.value }))}
+                    disabled={!requiresCard}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400 disabled:opacity-60"
+                  >
+                    <option value="">
+                      {tipoDesc.includes("pix")
+                        ? "Selecione cartão com PIX"
+                        : isCredito
+                          ? "Selecione cartão com fechamento/vencimento"
+                          : "Selecione cartão/conta (quando necessário)"}
+                    </option>
+                    {filteredCards.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nome} {c.bandeira ? `(${c.bandeira})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {isCredito && (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1 md:col-span-1">
+                    <label className="text-xs text-slate-400">Parcelas (somente crédito)</label>
+                    <input
+                      value={form.parcelas}
+                      onChange={(e) => setForm((p) => ({ ...p, parcelas: Number(e.target.value) || 1 }))}
+                      placeholder="Parcelas"
+                      inputMode="numeric"
+                      className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="mt-3 grid gap-3 text-sm md:grid-cols-2">
-              <input
-                type="date"
-                value={form.data}
-                onChange={(e) => setForm((p) => ({ ...p, data: e.target.value }))}
-                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-              />
-              <select
-                value={form.fornecedorId}
-                onChange={(e) => setForm((p) => ({ ...p, fornecedorId: e.target.value }))}
-                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-              >
-                <option value="">Fornecedor</option>
-                {suppliers.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.nome}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={form.tipoPagamentoId}
-                onChange={(e) => setForm((p) => ({ ...p, tipoPagamentoId: e.target.value, cartaoContaId: "" }))}
-                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-              >
-                <option value="">Meio de pagamento</option>
-                {types.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.descricao}
-                  </option>
-                ))}
-              </select>
-
-              {requiresCard && (
+              <label className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300">Fornecedor</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowSupplierModal(true)}
+                    className="text-xs font-semibold text-cyan-300 hover:text-cyan-100"
+                  >
+                    + adicionar
+                  </button>
+                </div>
+                <input
+                  placeholder="Buscar fornecedor"
+                  value={fornecedorBusca}
+                  onChange={(e) => setFornecedorBusca(e.target.value)}
+                  className="mb-2 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-50 outline-none focus:border-cyan-400"
+                />
                 <select
-                  value={form.cartaoContaId}
-                  onChange={(e) => setForm((p) => ({ ...p, cartaoContaId: e.target.value }))}
+                  value={form.fornecedorId}
+                  onChange={(e) => setForm((p) => ({ ...p, fornecedorId: e.target.value }))}
                   className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
                 >
-                  <option value="">
-                    {tipoDesc.includes("pix")
-                      ? "Selecione cartão com PIX"
-                      : isCredito
-                        ? "Selecione cartão com fechamento/vencimento"
-                        : "Selecione cartão/conta"}
-                  </option>
-                  {filteredCards.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nome} {c.bandeira ? `(${c.bandeira})` : ""}
+                  <option value="">Selecione o fornecedor</option>
+                  {fornecedoresFiltrados.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.nome}
                     </option>
                   ))}
                 </select>
-              )}
+              </label>
 
-              {isCredito && (
-                <div className="space-y-1">
-                  <label className="text-xs text-slate-400">Parcelas (somente crédito)</label>
-                  <input
-                    value={form.parcelas}
-                    onChange={(e) => setForm((p) => ({ ...p, parcelas: Number(e.target.value) || 1 }))}
-                    placeholder="Parcelas"
-                    inputMode="numeric"
-                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                  />
-                </div>
-              )}
-
-              <div className="space-y-1">
-                <label className="text-xs text-slate-400">Valor total (considera taxas do crédito)</label>
-                <input
-                  value={form.total}
-                  onChange={(e) => setForm((p) => ({ ...p, total: formatCurrency(e.target.value) }))}
-                  placeholder="Valor total (R$)"
-                  inputMode="decimal"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              <label className="space-y-1 md:col-span-1">
+                <span className="text-slate-300">Observações</span>
+                <textarea
+                  value={form.observacoes}
+                  onChange={(e) => setForm((p) => ({ ...p, observacoes: e.target.value }))}
+                  placeholder="Observações"
+                  className="min-h-[104px] w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
                 />
-              </div>
-
-              <textarea
-                value={form.observacoes}
-                onChange={(e) => setForm((p) => ({ ...p, observacoes: e.target.value }))}
-                placeholder="Observações"
-                className="md:col-span-2 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-              />
+              </label>
             </div>
 
             <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm text-slate-200">
@@ -719,6 +818,74 @@ export default function ComprasPage() {
                   </tbody>
                 </table>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSupplierModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4">
+          <div className="w-full max-w-lg rounded-xl bg-slate-900 p-6 text-sm text-slate-200 ring-1 ring-slate-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-base font-semibold text-slate-50">Novo fornecedor</p>
+                <p className="text-xs text-slate-400">Cadastre e selecione para esta compra.</p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 text-sm">
+              <input
+                value={novoFornecedor.nome}
+                onChange={(e) => setNovoFornecedor((p) => ({ ...p, nome: e.target.value }))}
+                placeholder="Nome*"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              />
+              <input
+                value={novoFornecedor.telefone}
+                onChange={(e) => setNovoFornecedor((p) => ({ ...p, telefone: maskPhone(e.target.value) }))}
+                placeholder="Telefone"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              />
+              <input
+                value={novoFornecedor.email}
+                onChange={(e) => setNovoFornecedor((p) => ({ ...p, email: e.target.value }))}
+                type="email"
+                placeholder="Email"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              />
+              <input
+                value={novoFornecedor.endereco}
+                onChange={(e) => setNovoFornecedor((p) => ({ ...p, endereco: e.target.value }))}
+                placeholder="Endereço"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              />
+              <textarea
+                value={novoFornecedor.observacoes}
+                onChange={(e) => setNovoFornecedor((p) => ({ ...p, observacoes: e.target.value }))}
+                placeholder="Observações"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              />
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSupplierModal(false);
+                  setNovoFornecedor({ nome: "", telefone: "", email: "", endereco: "", observacoes: "" });
+                }}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-rose-500"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void salvarFornecedor()}
+                disabled={salvandoFornecedor}
+                className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-400 disabled:opacity-60"
+              >
+                {salvandoFornecedor ? "Salvando..." : "Salvar"}
+              </button>
             </div>
           </div>
         </div>

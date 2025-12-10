@@ -30,6 +30,7 @@ export default function ProdutosPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<CategoryKey | "">("");
   const [showFormCatalog, setShowFormCatalog] = useState(false);
   const [showFormProduct, setShowFormProduct] = useState(false);
@@ -155,6 +156,8 @@ export default function ProdutosPage() {
   }
 
   async function handleCreateProduct(formData: FormData) {
+    setError(null);
+    setMessage(null);
     const preco = parseCurrency(priceCreateInput);
     if (Number.isNaN(preco) || preco <= 0) {
       setError("Informe um preço de venda válido.");
@@ -175,6 +178,9 @@ export default function ProdutosPage() {
       body: JSON.stringify(body),
     });
     await loadProducts();
+    setMessage("Produto adicionado com sucesso");
+    setShowProductTable(true);
+    setShowFormProduct(false);
     setPriceCreateInput("0,00");
   }
 
@@ -252,6 +258,11 @@ export default function ProdutosPage() {
 
   return (
     <ProtectedShell title="Produtos" subtitle="Catálogo e Cadastro">
+      {message && (
+        <div className="mb-4 rounded-lg bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200 ring-1 ring-emerald-500/40">
+          {message}
+        </div>
+      )}
       {error && (
         <div className="mb-4 rounded-lg bg-rose-500/10 px-4 py-3 text-sm text-rose-200 ring-1 ring-rose-500/40">
           {error}
@@ -289,8 +300,8 @@ export default function ProdutosPage() {
               try {
                 await handleCreateProduct(fd);
                 (e.target as HTMLFormElement).reset();
-                setShowFormProduct(false);
               } catch (err) {
+                setMessage(null);
                 setError(err instanceof Error ? err.message : "Erro ao salvar produto");
               }
             }}

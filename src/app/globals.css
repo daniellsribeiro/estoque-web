@@ -120,3 +120,21 @@
     @apply bg-background text-foreground;
   }
 }
+
+.scroll-soft {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
+}
+.scroll-soft::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-soft::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-soft::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 9999px;
+}
+.scroll-soft::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
