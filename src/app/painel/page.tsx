@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ProtectedShell } from "@/components/protected-shell";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
+import { apiFetch } from "@/lib/api-client";
 
 type DashboardData = {
   estoqueCritico: number;
@@ -28,25 +27,12 @@ export default function PainelPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem("accessToken");
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-
     const controller = new AbortController();
     const fetchDashboard = async () => {
       try {
-        const res = await fetch(`${API_URL}/dashboard/summary`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+        const data = await apiFetch<DashboardData>("/dashboard/summary", {
           signal: controller.signal,
         });
-        if (!res.ok) {
-          throw new Error(`Falha ao carregar dashboard (${res.status})`);
-        }
-        const data = await res.json();
         setDashboard({
           estoqueCritico: data.estoqueCritico ?? 0,
           vendasHoje: data.vendasHoje ?? 0,

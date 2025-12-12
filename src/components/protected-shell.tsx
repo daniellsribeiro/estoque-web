@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { apiFetch } from "@/lib/api-client";
 
 type Props = {
   title: string;
@@ -11,16 +12,31 @@ type Props = {
 
 export function ProtectedShell({ title, subtitle, children }: Props) {
   const router = useRouter();
-  const [userName] = useState<string | null>(() =>
-    typeof window !== "undefined" ? localStorage.getItem("userName") : null,
-  );
+  const [userName, setUserName] = useState<string | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem("accessToken");
-    if (!token) {
-      router.replace("/login");
-      return;
-    }
+    let canceled = false;
+    const validate = async () => {
+      try {
+        const profile = await apiFetch<{ name?: string }>("/auth/me");
+        if (!canceled) setUserName(profile?.name ?? null);
+      } catch {
+        if (!canceled) router.replace("/login");
+      } finally {
+        if (!canceled) setCheckingAuth(false);
+      }
+    };
+    void validate();
+    return () => {
+      canceled = true;
+    };
+  }, [router]);
+
+  useEffect(() => {
+    const handleUnauthorized = () => router.replace("/login");
+    window.addEventListener("api-unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("api-unauthorized", handleUnauthorized);
   }, [router]);
 
   const menu = useMemo(
@@ -39,11 +55,17 @@ export function ProtectedShell({ title, subtitle, children }: Props) {
     [],
   );
 
-  const handleLogout = () => {
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("userName");
-    router.replace("/login");
+  const handleLogout = async () => {
+    try {
+      await apiFetch("/auth/logout", { method: "POST" });
+    } finally {
+      router.replace("/login");
+    }
   };
+
+  if (checkingAuth) {
+    return <div className="min-h-screen bg-slate-950" />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50">

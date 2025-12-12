@@ -10,6 +10,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,7 +25,7 @@ export default function LoginPage() {
           "Content-Type": "application/json",
         },
         credentials: "include",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, rememberMe }),
       });
 
       if (!response.ok) {
@@ -32,9 +33,7 @@ export default function LoginPage() {
         throw new Error(body.message ?? "Não foi possível fazer login");
       }
 
-      const data = await response.json();
-      localStorage.setItem("accessToken", data.accessToken);
-      localStorage.setItem("userName", data.user?.name ?? "");
+      await response.json();
       router.replace("/painel");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro inesperado");
@@ -107,6 +106,16 @@ export default function LoginPage() {
                 </button>
               </div>
             </div>
+
+            <label className="flex items-center gap-2 text-sm text-slate-200">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-700 bg-slate-800 text-cyan-400 focus:ring-cyan-400"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+              />
+              <span>Manter sessão ativa neste dispositivo</span>
+            </label>
 
             {error ? (
               <p className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-200 ring-1 ring-red-500/40">

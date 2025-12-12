@@ -57,10 +57,60 @@ type PurchasePayment = {
   dataPagamento?: string | null;
   cartaoConta?: { id: string; nome: string };
   tipoPagamento?: { id: string; descricao: string };
-  compra?: { id: string };
+  compra?: { id: string; fornecedor?: { nome?: string | null } | null };
 };
 
+type PurchaseResumo = {
+  id: string;
+  fornecedor?: { nome?: string | null } | null;
+};
+
+type ExpenseDetail = {
+  id: string;
+  data?: string | null;
+  descricao?: string | null;
+  fornecedor?: { nome?: string | null } | null;
+  tipoPagamento?: { descricao?: string | null } | null;
+  cartaoConta?: { nome?: string | null } | null;
+  parcelas?: number | null;
+  totalCompra?: number | null;
+  status?: string | null;
+  observacoes?: string | null;
+  itens?: {
+    id?: string;
+    descricao?: string | null;
+    descricaoItem?: string | null;
+    qtde?: number | null;
+    valorUnit?: number | null;
+    valorTotal?: number | null;
+  }[];
+};
+
+type ExpensePayment = {
+  id: string;
+  gasto?: { id: string; descricao?: string | null; data?: string | null };
+  nParcela: number;
+  dataVencimento: string | null;
+  valorParcela: number;
+  statusPagamento: string;
+  dataPagamento?: string | null;
+  cartaoConta?: { id: string; nome: string };
+  tipoPagamento?: { id: string; descricao: string };
+};
+
+type ExtractItem = PurchasePayment | (ExpensePayment & { __tipo: "gasto" });
+
 const getCardId = (p: PurchasePayment): string | null => {
+  const cc = p.cartaoConta;
+  if (typeof cc === "string") return cc;
+  if (cc && typeof cc === "object" && "id" in cc && typeof cc.id === "string") return cc.id;
+  return null;
+};
+
+const isExpenseRow = (p: ExtractItem): p is ExpensePayment & { __tipo: "gasto" } =>
+  (p as any).__tipo === "gasto";
+
+const getCardIdFromExpense = (p: ExpensePayment): string | null => {
   const cc = p.cartaoConta;
   if (typeof cc === "string") return cc;
   if (cc && typeof cc === "object" && "id" in cc && typeof cc.id === "string") return cc.id;
@@ -76,6 +126,13 @@ const getTipoDesc = (p: PurchasePayment): string => {
         ? tp.descricao
         : "";
   return String(raw || "").toLowerCase();
+};
+
+const statusValorClass = (status: string) => {
+  const norm = (status || "").toLowerCase();
+  if (norm.includes("paga")) return "text-emerald-400";
+  if (norm.includes("pend")) return "text-amber-300";
+  return "text-slate-100";
 };
 
 const Help = ({ title }: { title: string }) => (
@@ -120,6 +177,8 @@ export default function PagamentosPage() {
   const [types, setTypes] = useState<PaymentType[]>([]);
   const [cards, setCards] = useState<CardAccount[]>([]);
   const [pagamentos, setPagamentos] = useState<PurchasePayment[]>([]);
+  const [gastosPagamentos, setGastosPagamentos] = useState<ExpensePayment[]>([]);
+  const [comprasMap, setComprasMap] = useState<Record<string, PurchaseResumo>>({});
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [showCards, setShowCards] = useState(false);
@@ -136,6 +195,7 @@ export default function PagamentosPage() {
   const [compraInfo, setCompraInfo] = useState<{ id: string; loading: boolean; data: PurchaseDetail | null } | null>(
     null,
   );
+  const [gastoInfo, setGastoInfo] = useState<{ id: string; loading: boolean; data: ExpenseDetail | null } | null>(null);
   const [selectedCardExtract, setSelectedCardExtract] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>(formatMonth());
   const [paymentTypeFilter, setPaymentTypeFilter] = useState<string>("");
@@ -143,14 +203,22 @@ export default function PagamentosPage() {
 
   const loadAll = async () => {
     try {
-      const [t, c, pays] = await Promise.all([
+      const [t, c, pays, gastosPays, comprasList] = await Promise.all([
         apiFetch<PaymentType[]>("/financeiro/tipos-pagamento"),
         apiFetch<CardAccount[]>("/financeiro/cartoes-contas"),
         apiFetch<PurchasePayment[]>("/compras/pagamentos"),
+        apiFetch<ExpensePayment[]>("/gastos/pagamentos"),
+        apiFetch<PurchaseResumo[]>("/compras"),
       ]);
       setTypes(t ?? []);
       setCards(c ?? []);
       setPagamentos(pays ?? []);
+      setGastosPagamentos(gastosPays ?? []);
+      const map: Record<string, PurchaseResumo> = {};
+      (comprasList ?? []).forEach((cmp) => {
+        map[cmp.id] = { id: cmp.id, fornecedor: cmp.fornecedor };
+      });
+      setComprasMap(map);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados");
@@ -215,8 +283,8 @@ export default function PagamentosPage() {
     }
   };
 
-  const pagamentosFiltrados = useMemo(() => {
-    return pagamentos.filter((p) => {
+  const pagamentosFiltrados = useMemo<ExtractItem[]>(() => {
+    const compras = pagamentos.filter((p) => {
       const cardId = getCardId(p);
       if (!cardId || cardId !== selectedCardExtract) return false;
       const baseDate = p.dataVencimento || p.dataPagamento || "";
@@ -229,7 +297,23 @@ export default function PagamentosPage() {
       }
       return true;
     });
-  }, [pagamentos, selectedCardExtract, selectedMonth, paymentTypeFilter]);
+
+    const gastos = gastosPagamentos.filter((p) => {
+      const cardId = getCardIdFromExpense(p);
+      if (!cardId || cardId !== selectedCardExtract) return false;
+      const baseDate = p.dataVencimento || p.dataPagamento || "";
+      const d = baseDate ? new Date(baseDate) : new Date();
+      const mes = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+      if (selectedMonth && mes !== selectedMonth) return false;
+      if (paymentTypeFilter) {
+        const tpDesc = (p.tipoPagamento?.descricao || "").toLowerCase();
+        if (!tpDesc.includes(paymentTypeFilter.toLowerCase())) return false;
+      }
+      return true;
+    });
+
+    return [...compras, ...gastos.map((g) => ({ ...g, __tipo: "gasto" as const }))];
+  }, [pagamentos, gastosPagamentos, selectedCardExtract, selectedMonth, paymentTypeFilter]);
 
   const resumoPagamentos = useMemo(() => {
     const total = pagamentosFiltrados.reduce((acc, p) => acc + Number(p.valorParcela || 0), 0);
@@ -253,6 +337,18 @@ export default function PagamentosPage() {
     } catch (err) {
       setCompraInfo((prev) => (prev ? { ...prev, loading: false } : prev));
       setError(err instanceof Error ? err.message : "Erro ao carregar compra");
+    }
+  };
+
+  const abrirGastoInfo = async (gastoId: string) => {
+    setGastoInfo({ id: gastoId, loading: true, data: null });
+    try {
+      const data = await apiFetch<ExpenseDetail>(`/gastos/${gastoId}`);
+      setGastoInfo({ id: gastoId, loading: false, data: data ?? null });
+      setError(null);
+    } catch (err) {
+      setGastoInfo((prev) => (prev ? { ...prev, loading: false } : prev));
+      setError(err instanceof Error ? err.message : "Erro ao carregar gasto");
     }
   };
 
@@ -743,31 +839,52 @@ export default function PagamentosPage() {
                     <tr>
                       <th className="px-4 py-2">Parcela</th>
                       <th className="px-4 py-2">Vencimento</th>
+                      <th className="px-4 py-2">Fornecedor</th>
                       <th className="px-4 py-2">Valor</th>
                       <th className="px-4 py-2">Tipo</th>
-                      <th className="px-4 py-2">Status</th>
                       <th className="px-4 py-2 text-right">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pagamentosFiltrados.map((p) => (
-                      <tr key={p.id} className="border-t border-slate-800">
-                        <td className="px-4 py-2">{p.nParcela}</td>
-                        <td className="px-4 py-2">{p.dataVencimento ? p.dataVencimento.slice(0, 10) : "-"}</td>
-                        <td className="px-4 py-2">R$ {Number(p.valorParcela || 0).toFixed(2)}</td>
-                        <td className="px-4 py-2">{p.tipoPagamento?.descricao ?? "-"}</td>
-                        <td className="px-4 py-2 capitalize">{p.statusPagamento}</td>
-                        <td className="px-4 py-2 text-right">
-                          <button
-                            className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50"
-                            disabled={!p.compra?.id}
-                            onClick={() => p.compra?.id && void abrirCompraInfo(p.compra.id)}
-                          >
-                            Ver compra
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {pagamentosFiltrados.map((p) => {
+                      const isGasto = isExpenseRow(p);
+                      const id = p.id;
+                      const fornecedorNome = isGasto
+                        ? (p as ExpensePayment).gasto?.descricao || (p as ExpensePayment).gasto?.id || "-"
+                        : (p as PurchasePayment).compra?.fornecedor?.nome ||
+                          (p as PurchasePayment).compra?.id
+                          ? comprasMap[(p as PurchasePayment).compra!.id]?.fornecedor?.nome || "-"
+                          : "-";
+                      const valorClass = statusValorClass(p.statusPagamento);
+                      return (
+                        <tr key={id} className="border-t border-slate-800">
+                          <td className="px-4 py-2">{p.nParcela}</td>
+                          <td className="px-4 py-2">{p.dataVencimento ? p.dataVencimento.slice(0, 10) : "-"}</td>
+                          <td className="px-4 py-2">{fornecedorNome}</td>
+                          <td className={`px-4 py-2 font-semibold ${valorClass}`}>R$ {Number(p.valorParcela || 0).toFixed(2)}</td>
+                          <td className="px-4 py-2">{p.tipoPagamento?.descricao ?? "-"}</td>
+                          <td className="px-4 py-2 text-right">
+                            {isGasto ? (
+                              <button
+                                className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50"
+                                onClick={() => (p as ExpensePayment).gasto?.id && void abrirGastoInfo((p as ExpensePayment).gasto!.id)}
+                                disabled={!(p as ExpensePayment).gasto?.id}
+                              >
+                                Ver gasto
+                              </button>
+                            ) : (
+                              <button
+                                className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50"
+                                disabled={!(p as PurchasePayment).compra?.id}
+                                onClick={() => (p as PurchasePayment).compra?.id && void abrirCompraInfo((p as PurchasePayment).compra!.id)}
+                              >
+                                Ver compra
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
@@ -786,7 +903,7 @@ export default function PagamentosPage() {
                   onClick={() => void marcarFaturaPaga()}
                   disabled={salvandoFatura}
                 >
-                  {salvandoFatura ? "Salvando..." : "Marcar m?s como pago"}
+                  {salvandoFatura ? "Salvando..." : "Marcar mês como pago"}
                 </button>
               ) : (
                 <div className="rounded-lg bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-500/30">
@@ -853,6 +970,99 @@ export default function PagamentosPage() {
                 </table>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {gastoInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 px-4 backdrop-blur">
+          <div className="w-full max-w-3xl rounded-xl bg-slate-900 p-5 text-sm text-slate-200 ring-1 ring-slate-800 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-base font-semibold text-slate-50">Detalhes do gasto</h4>
+                <p className="text-xs text-slate-400">ID: {gastoInfo.id}</p>
+              </div>
+              <button
+                className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                onClick={() => setGastoInfo(null)}
+              >
+                Fechar
+              </button>
+            </div>
+
+            {gastoInfo.loading ? (
+              <div className="mt-4 text-slate-300">Carregando...</div>
+            ) : gastoInfo.data ? (
+              <div className="mt-4 space-y-3">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Fornecedor</p>
+                    <p className="font-semibold text-slate-50">{gastoInfo.data.fornecedor?.nome ?? "-"}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Tipo de pagamento</p>
+                    <p className="font-semibold text-slate-50">{gastoInfo.data.tipoPagamento?.descricao ?? "-"}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Data</p>
+                    <p className="font-semibold text-slate-50">
+                      {gastoInfo.data.data ? gastoInfo.data.data.slice(0, 10) : "-"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Parcelas</p>
+                    <p className="font-semibold text-slate-50">{gastoInfo.data.parcelas ?? "-"}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                    <p className="text-xs text-slate-400">Cartao/Conta</p>
+                    <p className="font-semibold text-slate-50">{gastoInfo.data.cartaoConta?.nome ?? "-"}</p>
+                  </div>
+                </div>
+                <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60">
+                  <p className="text-xs text-slate-400">Total</p>
+                  <p className="text-lg font-semibold text-slate-50">
+                    R$ {Number(gastoInfo.data.totalCompra || 0).toFixed(2)}
+                  </p>
+                  <p className="text-xs text-slate-400 capitalize">Status: {gastoInfo.data.status ?? "-"}</p>
+                </div>
+                {gastoInfo.data.observacoes && (
+                  <div className="rounded-lg bg-slate-800/60 p-3 ring-1 ring-slate-700/60 text-sm text-slate-200">
+                    {gastoInfo.data.observacoes}
+                  </div>
+                )}
+                <div>
+                  <p className="text-xs text-slate-400">Itens</p>
+                  {!gastoInfo.data.itens || gastoInfo.data.itens.length === 0 ? (
+                    <p className="mt-2 text-slate-300">Nenhum item listado.</p>
+                  ) : (
+                    <div className="mt-2 max-h-60 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
+                          <tr>
+                            <th className="px-3 py-2">Descriçao</th>
+                            <th className="px-3 py-2 text-right">Qtd</th>
+                            <th className="px-3 py-2 text-right">Unit</th>
+                            <th className="px-3 py-2 text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {gastoInfo.data.itens.map((it, idx) => (
+                            <tr key={it.id || idx} className="border-t border-slate-800">
+                              <td className="px-3 py-2">{it.descricaoItem || it.descricao || "-"}</td>
+                              <td className="px-3 py-2 text-right">{it.qtde ?? "-"}</td>
+                              <td className="px-3 py-2 text-right">R$ {Number(it.valorUnit || 0).toFixed(2)}</td>
+                              <td className="px-3 py-2 text-right">R$ {Number(it.valorTotal || (it.valorUnit || 0) * (it.qtde || 0)).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 text-rose-200">Gasto não encontrado.</div>
+            )}
           </div>
         </div>
       )}

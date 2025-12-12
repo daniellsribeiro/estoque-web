@@ -1,15 +1,10 @@
-"use client";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+const AUTH_COOKIE_NAME = "estoque_auth";
 
-export default function Home() {
-  const router = useRouter();
-
-  useEffect(() => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-    router.replace(token ? "/painel" : "/login");
-  }, [router]);
-
-  return null;
+export default async function Home() {
+  const cookieStore = await cookies();
+  const hasSession = Boolean(cookieStore.get(AUTH_COOKIE_NAME));
+  redirect(hasSession ? "/painel" : "/login");
 }

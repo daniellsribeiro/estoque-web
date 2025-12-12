@@ -23,6 +23,7 @@ type Expense = {
   parcelas: number;
   totalCompra: number;
   status: string;
+  observacoes?: string | null;
 };
 type ExpensePayment = {
   id: string;
@@ -80,7 +81,7 @@ export default function GastosPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [parcelasGastoId, setParcelasGastoId] = useState<string | null>(null);
+  const [detalhesGastoId, setDetalhesGastoId] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     data: new Date().toISOString().slice(0, 10),
@@ -248,7 +249,14 @@ export default function GastosPage() {
   };
 
   const gastosFiltrados = gastos;
-  const pagamentosSelecionados = parcelasGastoId ? pagamentos.filter((p) => p.gasto.id === parcelasGastoId) : [];
+  const pagamentosSelecionados = useMemo(
+    () => (detalhesGastoId ? pagamentos.filter((p) => p.gasto.id === detalhesGastoId) : []),
+    [detalhesGastoId, pagamentos],
+  );
+  const gastoSelecionado = useMemo(
+    () => (detalhesGastoId ? gastos.find((g) => g.id === detalhesGastoId) || null : null),
+    [detalhesGastoId, gastos],
+  );
 
   return (
     <ProtectedShell title="Gastos" subtitle="Despesas operacionais e pagamentos em cartão/PIX.">
@@ -462,7 +470,7 @@ export default function GastosPage() {
 
         <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
           <h3 className="text-lg font-semibold text-slate-50">Gastos</h3>
-          <p className="text-sm text-slate-400">Selecione para ver parcelas.</p>
+          <p className="text-sm text-slate-400">Selecione para ver detalhes e parcelas.</p>
           <div className="mt-3 max-h-80 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
             {loading ? (
               <div className="p-3 text-sm text-slate-400">Carregando...</div>
@@ -493,9 +501,9 @@ export default function GastosPage() {
                       <td className="px-4 py-2 text-right">
                         <button
                           className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                          onClick={() => setParcelasGastoId(g.id)}
+                          onClick={() => setDetalhesGastoId(g.id)}
                         >
-                          Parcelas
+                          Detalhes
                         </button>
                       </td>
                     </tr>
@@ -584,24 +592,65 @@ export default function GastosPage() {
         </div>
       )}
 
-      {parcelasGastoId && (
+      {detalhesGastoId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4">
           <div className="w-full max-w-4xl rounded-xl bg-slate-900 p-6 text-sm text-slate-200 ring-1 ring-slate-800">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-base font-semibold text-slate-50">Parcelas do gasto</p>
-                <p className="text-xs text-slate-400">{parcelasGastoId}</p>
+                <p className="text-base font-semibold text-slate-50">Detalhes do gasto</p>
+                <p className="text-xs text-slate-400">
+                  {gastoSelecionado?.descricao || "Sem descricao"} -{" "}
+                  {gastoSelecionado?.data ? new Date(gastoSelecionado.data).toLocaleDateString() : "-"}
+                </p>
               </div>
               <button
                 type="button"
-                onClick={() => setParcelasGastoId(null)}
+                onClick={() => setDetalhesGastoId(null)}
                 className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
               >
                 Fechar
               </button>
             </div>
 
-            <div className="mt-4 max-h-[420px] overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+            {gastoSelecionado && (
+              <>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                    <div className="text-xs text-slate-400">Total</div>
+                    <div className="text-lg font-semibold text-emerald-300">
+                      R$ {Number(gastoSelecionado.totalCompra || 0).toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                    <div className="text-xs text-slate-400">Parcelas</div>
+                    <div className="text-lg font-semibold text-slate-100">{gastoSelecionado.parcelas}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                    <div className="text-xs text-slate-400">Status</div>
+                    <div className="text-lg font-semibold text-slate-100 capitalize">{gastoSelecionado.status}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                    <div className="text-xs text-slate-400">Forma de pagamento</div>
+                    <div className="text-sm font-semibold text-slate-100">{gastoSelecionado.tipoPagamento?.descricao || "-"}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                    <div className="text-xs text-slate-400">Cartao/Conta</div>
+                    <div className="text-sm font-semibold text-slate-100">{gastoSelecionado.cartaoConta?.nome || "-"}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                    <div className="text-xs text-slate-400">Fornecedor</div>
+                    <div className="text-sm font-semibold text-slate-100">{gastoSelecionado.fornecedor?.nome || "-"}</div>
+                  </div>
+                </div>
+                {gastoSelecionado.observacoes && (
+                  <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm text-slate-200">
+                    {gastoSelecionado.observacoes}
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="mt-5 max-h-[420px] overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
               {pagamentosSelecionados.length === 0 ? (
                 <div className="p-3 text-slate-400">Sem parcelas cadastradas.</div>
               ) : (
