@@ -393,18 +393,23 @@ export default function VendasPage() {
     return query ? `?${query}` : "";
   };
 
+  const unwrapProducts = (data: Product[] | { items?: Product[] } | null | undefined) => {
+    if (!data) return [];
+    return Array.isArray(data) ? data : data.items ?? [];
+  };
+
   const carregarBases = async () => {
     const [cli, tipos, ca, prd] = await Promise.all([
       apiFetch<Customer[]>("/clientes"),
       apiFetch<PaymentType[]>("/financeiro/tipos-pagamento"),
       apiFetch<CardAccount[]>("/financeiro/cartoes-contas"),
-      apiFetch<Product[]>("/produtos"),
+      apiFetch<Product[] | { items?: Product[] }>("/produtos?limit=1000"),
     ]);
     setClientes(cli || []);
     setPaymentTypes(tipos || []);
     const cardsData = ca || [];
     setCards(cardsData);
-    setProducts(prd || []);
+    setProducts(unwrapProducts(prd));
     // preload regras para saber quais cartoes suportam credito/link
     try {
       const entries = await Promise.all(

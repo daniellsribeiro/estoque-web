@@ -90,17 +90,21 @@ const formatCurrencyBRL = (n: number) =>
 
 export default function EstoquePage() {
   const [produtos, setProdutos] = useState<ProdutoResponse[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const [busca, setBusca] = useState("");
   const [minAlerta, setMinAlerta] = useState(1);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
-  const [mostrarBaixa, setMostrarBaixa] = useState(false);
   const [filtroTipo, setFiltroTipo] = useState("");
   const [filtroCor, setFiltroCor] = useState("");
   const [filtroMaterial, setFiltroMaterial] = useState("");
+  const [filtroTamanho, setFiltroTamanho] = useState("");
   const [baixaProdutoId, setBaixaProdutoId] = useState("");
   const [baixaQtd, setBaixaQtd] = useState<string>("");
   const [baixaMotivo, setBaixaMotivo] = useState("");
+  const [baixaModalOpen, setBaixaModalOpen] = useState(false);
+  const [baixaErro, setBaixaErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const [historicoProduto, setHistoricoProduto] = useState<ProdutoResponse | null>(null);
   const [historicoMovimentos, setHistoricoMovimentos] = useState<EstoqueHistorico[]>([]);
@@ -110,11 +114,33 @@ export default function EstoquePage() {
   const [detalheVenda, setDetalheVenda] = useState<VendaDetalhe | null>(null);
   const [carregandoVenda, setCarregandoVenda] = useState(false);
 
-  const carregar = async () => {
+  const PER_PAGE = 20;
+
+  const carregar = async (targetPage = 1) => {
     setCarregando(true);
     try {
-      const data = await apiFetch<ProdutoResponse[]>("/produtos/estoque");
-      setProdutos(data ?? []);
+      const params = new URLSearchParams();
+      params.set("page", String(targetPage));
+      params.set("limit", String(PER_PAGE));
+      if (busca.trim()) params.set("search", busca.trim());
+      if (filtroTipo) params.set("tipo", filtroTipo);
+      if (filtroCor) params.set("cor", filtroCor);
+      if (filtroMaterial) params.set("material", filtroMaterial);
+      if (filtroTamanho) params.set("tamanho", filtroTamanho);
+      const data = await apiFetch<{ items?: ProdutoResponse[]; total?: number; page?: number; perPage?: number } | ProdutoResponse[]>(
+        "/produtos/estoque?" + params.toString(),
+      );
+      const list = Array.isArray(data) ? data : data?.items ?? [];
+      const perPage = Array.isArray(data) ? PER_PAGE : data?.perPage ?? PER_PAGE;
+      const total = Array.isArray(data) ? undefined : data?.total;
+      const currentPage = !Array.isArray(data) && data?.page ? data.page : targetPage;
+      setProdutos(list ?? []);
+      if (typeof total === "number") {
+        setHasMore(currentPage * perPage < total);
+      } else {
+        setHasMore((list?.length ?? 0) === perPage);
+      }
+      setPage(currentPage);
       setErro(null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao carregar estoque");
@@ -125,8 +151,9 @@ export default function EstoquePage() {
   };
 
   useEffect(() => {
-    void carregar();
-  }, []);
+    void carregar(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busca, filtroTipo, filtroCor, filtroMaterial, filtroTamanho]);
 
   const filtrados = useMemo(() => {
     const term = busca.trim().toLowerCase();
@@ -136,12 +163,13 @@ export default function EstoquePage() {
         .join(" ")
         .toLowerCase();
       const matchBusca = !term || campos.includes(term);
-      const matchTipo = !filtroTipo || p.tipo === filtroTipo;
-      const matchCor = !filtroCor || p.cor === filtroCor;
-      const matchMaterial = !filtroMaterial || p.material === filtroMaterial;
-      return matchBusca && matchTipo && matchCor && matchMaterial;
+      const matchTipo = !filtroTipo || (p.tipo || "").toLowerCase().includes(filtroTipo.toLowerCase());
+      const matchCor = !filtroCor || (p.cor || "").toLowerCase().includes(filtroCor.toLowerCase());
+      const matchMaterial = !filtroMaterial || (p.material || "").toLowerCase().includes(filtroMaterial.toLowerCase());
+      const matchTamanho = !filtroTamanho || (p.tamanho || "").toLowerCase().includes(filtroTamanho.toLowerCase());
+      return matchBusca && matchTipo && matchCor && matchMaterial && matchTamanho;
     });
-  }, [produtos, busca, filtroTipo, filtroCor, filtroMaterial]);
+  }, [produtos, busca, filtroTipo, filtroCor, filtroMaterial, filtroTamanho]);
 
   const totalSkus = filtrados.length;
   const totalPecas = filtrados.reduce((acc, p) => acc + (p.quantidadeAtual ?? 0), 0);
@@ -162,23 +190,25 @@ export default function EstoquePage() {
     produtos.forEach((p) => p.material && set.add(p.material));
     return Array.from(set);
   }, [produtos]);
+  const tamanhosFiltro = useMemo(() => {
+    const set = new Set<string>();
+    produtos.forEach((p) => p.tamanho && set.add(p.tamanho));
+    return Array.from(set);
+  }, [produtos]);
 
   const enviarBaixa = async () => {
     const qtd = Number(baixaQtd.replace(",", "."));
     if (!baixaProdutoId || !qtd || qtd <= 0) {
-      setErro("Informe produto e quantidade maior que zero");
-      setSucesso(null);
+      setBaixaErro("Informe produto e quantidade maior que zero");
       return;
     }
     const produtoSelecionado = produtos.find((p) => p.id === baixaProdutoId);
     const saldoAtual = produtoSelecionado?.quantidadeAtual ?? 0;
     if (qtd > saldoAtual) {
-      setErro("Quantidade de baixa maior que o saldo do produto");
-      setSucesso(null);
+      setBaixaErro("Quantidade de baixa maior que o saldo do produto");
       return;
     }
-    setErro(null);
-    setSucesso(null);
+    setBaixaErro(null);
     try {
       const motivoFinal = (baixaMotivo || "BAIXA").trim().toUpperCase();
       await apiFetch(`/produtos/${baixaProdutoId}/estoque/baixa`, {
@@ -189,11 +219,11 @@ export default function EstoquePage() {
           referencia: undefined,
         }),
       });
-      setSucesso("Baixa registrada com sucesso");
       setBaixaQtd("");
-      await carregar();
+      setBaixaModalOpen(false);
+      await carregar(page);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao registrar baixa");
+      setBaixaErro(e instanceof Error ? e.message : "Erro ao registrar baixa");
     }
   };
 
@@ -253,107 +283,12 @@ export default function EstoquePage() {
 
       <div className="space-y-6">
         <div className="rounded-xl bg-slate-900/70 p-4 ring-1 ring-slate-800 space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-50">Registrar baixa</h3>
-              <p className="text-sm text-slate-400">Selecione o produto e informe a quantidade a subtrair.</p>
-            </div>
-            <button
-              onClick={() => setMostrarBaixa((prev) => !prev)}
-              className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:border-cyan-400"
-            >
-              {mostrarBaixa ? "Ocultar" : "Mostrar"}
-            </button>
-          </div>
-          {mostrarBaixa && (
-            <div className="grid gap-3 md:grid-cols-4 text-sm">
-              <select
-                value={baixaProdutoId}
-                onChange={(e) => setBaixaProdutoId(e.target.value)}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400 md:col-span-2"
-              >
-                <option value="">Escolha o produto</option>
-                {produtos.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.codigo} - {p.nome}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={baixaQtd}
-                onChange={(e) => setBaixaQtd(e.target.value)}
-                placeholder="Quantidade"
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-              />
-              <input
-                value={baixaMotivo}
-                onChange={(e) => setBaixaMotivo(e.target.value.toUpperCase())}
-                placeholder="Motivo"
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-              />
-              <div className="md:col-span-2 flex gap-2">
-                <button
-                  onClick={enviarBaixa}
-                  className="w-full rounded-lg bg-rose-500 px-3 py-2 font-semibold text-slate-50 transition hover:bg-rose-400"
-                >
-                  Registrar baixa
-                </button>
-                <button
-                  onClick={() => {
-                    setBaixaProdutoId("");
-                    setBaixaQtd("");
-                    setBaixaMotivo("");
-                  }}
-                  className="w-full rounded-lg bg-slate-700 px-3 py-2 font-semibold text-slate-100 transition hover:bg-slate-600"
-                >
-                  Limpar
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-xl bg-slate-900/70 p-4 ring-1 ring-slate-800">
-            <p className="text-xs text-slate-400">SKUs listados</p>
-            <p className="text-2xl font-semibold text-slate-50">{formatNumber(totalSkus)}</p>
-          </div>
-          <div className="rounded-xl bg-slate-900/70 p-4 ring-1 ring-slate-800">
-            <p className="text-xs text-slate-400">Peças em estoque</p>
-            <p className="text-2xl font-semibold text-slate-50">{formatNumber(totalPecas)}</p>
-          </div>
-          <div className="rounded-xl bg-slate-900/70 p-4 ring-1 ring-slate-800">
-            <p className="text-xs text-slate-400">Itens em alerta</p>
-            <p className="text-2xl font-semibold text-amber-300">{formatNumber(baixos.length)}</p>
-          </div>
-        </div>
-
-        <div className="rounded-xl bg-slate-900/70 p-4 ring-1 ring-slate-800 space-y-3">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <h3 className="text-lg font-semibold text-slate-50">Lista de estoque</h3>
               <p className="text-sm text-slate-400">
                 Busque por nome, código ou atributos. Ajuste alerta de quantidade mínima.
               </p>
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="number"
-                min={0}
-                value={minAlerta}
-                onChange={(e) => setMinAlerta(Number(e.target.value) || 0)}
-                className="w-28 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-50 outline-none focus:border-cyan-400"
-                title="Quantidade para alerta"
-              />
-              <button
-                onClick={carregar}
-                className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-100 ring-1 ring-slate-700 hover:bg-slate-700 transition"
-              >
-                Atualizar
-              </button>
             </div>
           </div>
 
@@ -397,6 +332,18 @@ export default function EstoquePage() {
               {materiaisFiltro.map((m) => (
                 <option key={m} value={m}>
                   {m}
+                </option>
+              ))}
+            </select>
+            <select
+              value={filtroTamanho}
+              onChange={(e) => setFiltroTamanho(e.target.value)}
+              className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-50 outline-none focus:border-cyan-400"
+            >
+              <option value="">Tamanho</option>
+              {tamanhosFiltro.map((t) => (
+                <option key={t} value={t}>
+                  {t}
                 </option>
               ))}
             </select>
@@ -447,25 +394,28 @@ export default function EstoquePage() {
                         </td>
                         <td className="px-4 py-2">
                           <div className="flex justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => abrirHistorico(p)}
-                              className="rounded-lg bg-slate-800 p-2 text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                              title="Ver histórico"
-                            >
-                              <History className="h-4 w-4" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setBaixaProdutoId(p.id);
-                                setMostrarBaixa(true);
-                              }}
-                              className="rounded-lg bg-rose-500/90 p-2 text-slate-50 ring-1 ring-rose-400 transition hover:bg-rose-400"
-                              title="Registrar baixa"
-                            >
-                              <CircleMinus className="h-4 w-4" />
-                            </button>
+                          <button
+                            type="button"
+                            onClick={() => abrirHistorico(p)}
+                            className="rounded-lg bg-slate-800 p-2 text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                            title="Ver histórico"
+                          >
+                            <History className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setBaixaProdutoId(p.id);
+                              setBaixaQtd("");
+                              setBaixaMotivo("");
+                              setBaixaErro(null);
+                              setBaixaModalOpen(true);
+                            }}
+                            className="rounded-lg bg-rose-500/90 p-2 text-slate-50 ring-1 ring-rose-400 transition hover:bg-rose-400"
+                            title="Registrar baixa"
+                          >
+                            <CircleMinus className="h-4 w-4" />
+                          </button>
                           </div>
                         </td>
                       </tr>
@@ -475,88 +425,196 @@ export default function EstoquePage() {
               </table>
             )}
           </div>
+          <div className="flex flex-col gap-2 pt-3 md:flex-row md:items-center md:justify-end">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={page === 1 || carregando}
+                onClick={() => void carregar(Math.max(1, page - 1))}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-100 transition hover:border-cyan-400 disabled:opacity-50"
+              >
+                Anterior
+              </button>
+              <span className="text-xs text-slate-400">Página {page}</span>
+              <button
+                type="button"
+                disabled={!hasMore || carregando}
+                onClick={() => void carregar(page + 1)}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-100 transition hover:border-cyan-400 disabled:opacity-50"
+              >
+                Próxima
+              </button>
+            </div>
+          </div>
           {historicoProduto && (
-            <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-slate-50">
-                    Historico de estoque - {historicoProduto.codigo} ({historicoProduto.nome})
-                  </p>
-                  <p className="text-xs text-slate-400">Movimentacoes registradas</p>
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 px-4">
+              <div className="w-full max-w-3xl rounded-2xl bg-slate-900 p-5 text-sm text-slate-200 ring-1 ring-slate-700 shadow-2xl">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-lg font-semibold text-slate-50">
+                      Histórico de estoque - {historicoProduto.codigo} ({historicoProduto.nome})
+                    </p>
+                    <p className="text-xs text-slate-400">Movimentações registradas</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHistoricoProduto(null);
+                      setHistoricoMovimentos([]);
+                      setHistoricoCarregando(false);
+                    }}
+                    className="rounded-full bg-slate-800 px-3 py-1 text-sm font-semibold text-slate-200 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                  >
+                    Fechar
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setHistoricoProduto(null);
-                    setHistoricoMovimentos([]);
-                    setHistoricoCarregando(false);
-                  }}
-                  className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                >
-                  Fechar
-                </button>
+                {historicoCarregando ? (
+                  <p className="mt-3 text-slate-300">Carregando histórico...</p>
+                ) : historicoMovimentos.length ? (
+                  <ul className="mt-3 space-y-2 max-h-80 overflow-auto pr-1">
+                    {historicoMovimentos.map((mov, idx) => (
+                      <li
+                        key={`${mov.dataMudanca ?? ""}-${idx}`}
+                        className="rounded-lg bg-slate-800/60 px-3 py-2 ring-1 ring-slate-700/60"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-semibold text-slate-50">{mov.motivo}</p>
+                            {mov.referencia && <p className="text-xs text-slate-400">Ref: {mov.referencia}</p>}
+                          </div>
+                          <span className="text-xs text-slate-400">
+                            {mov.dataMudanca ? new Date(mov.dataMudanca).toLocaleString("pt-BR") : "-"}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400">
+                          De {mov.quantidadeAnterior} para {mov.quantidadeNova}
+                        </p>
+                        <div className="mt-1 flex gap-4 text-sm font-semibold">
+                          <span className="text-emerald-200">+{mov.quantidadeAdicionada}</span>
+                          <span className="text-rose-200">-{mov.quantidadeSubtraida}</span>
+                        </div>
+                        {(mov.compraId || mov.vendaId) && (
+                          <div className="mt-2 flex gap-2">
+                            {mov.compraId && (
+                              <button
+                                type="button"
+                                onClick={() => abrirCompra(mov.compraId as string)}
+                                className="inline-flex items-center gap-1 rounded-md bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                                title="Ver detalhes da compra"
+                              >
+                                <ShoppingCart className="h-4 w-4" />
+                                Compra
+                              </button>
+                            )}
+                            {mov.vendaId && (
+                              <button
+                                type="button"
+                                onClick={() => abrirVenda(mov.vendaId as string)}
+                                className="inline-flex items-center gap-1 rounded-md bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                                title="Ver detalhes da venda"
+                              >
+                                <BadgeDollarSign className="h-4 w-4" />
+                                Venda
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-3 text-sm text-slate-300">Sem historico registrado para este produto.</p>
+                )}
               </div>
-              {historicoCarregando ? (
-                <p className="mt-3 text-slate-300">Carregando historico...</p>
-              ) : historicoMovimentos.length ? (
-                <ul className="mt-3 space-y-2">
-                  {historicoMovimentos.map((mov, idx) => (
-                    <li
-                      key={`${mov.dataMudanca ?? ""}-${idx}`}
-                      className="rounded-lg bg-slate-800/60 px-3 py-2 ring-1 ring-slate-700/60"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-semibold text-slate-50">{mov.motivo}</p>
-                          {mov.referencia && <p className="text-xs text-slate-400">Ref: {mov.referencia}</p>}
-                        </div>
-                        <span className="text-xs text-slate-400">
-                          {mov.dataMudanca ? new Date(mov.dataMudanca).toLocaleString("pt-BR") : "-"}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400">
-                        De {mov.quantidadeAnterior} para {mov.quantidadeNova}
-                      </p>
-                      <div className="mt-1 flex gap-4 text-sm font-semibold">
-                        <span className="text-emerald-200">+{mov.quantidadeAdicionada}</span>
-                        <span className="text-rose-200">-{mov.quantidadeSubtraida}</span>
-                      </div>
-                      {(mov.compraId || mov.vendaId) && (
-                        <div className="mt-2 flex gap-2">
-                          {mov.compraId && (
-                            <button
-                              type="button"
-                              onClick={() => abrirCompra(mov.compraId as string)}
-                              className="inline-flex items-center gap-1 rounded-md bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                              title="Ver detalhes da compra"
-                            >
-                              <ShoppingCart className="h-4 w-4" />
-                              Compra
-                            </button>
-                          )}
-                          {mov.vendaId && (
-                            <button
-                              type="button"
-                              onClick={() => abrirVenda(mov.vendaId as string)}
-                              className="inline-flex items-center gap-1 rounded-md bg-slate-800 px-2 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                              title="Ver detalhes da venda"
-                            >
-                              <BadgeDollarSign className="h-4 w-4" />
-                              Venda
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-3 text-sm text-slate-300">Sem historico registrado para este produto.</p>
-              )}
             </div>
           )}
 
         </div>
+
+        {baixaModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 px-4">
+            <div className="w-full max-w-2xl rounded-2xl bg-slate-900 p-5 text-slate-100 ring-1 ring-slate-700 shadow-2xl">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-50">Registrar baixa</h3>
+                  <p className="text-xs text-slate-400">Selecione o produto e informe a quantidade.</p>
+                </div>
+                <button
+                  className="rounded-full bg-slate-800 px-3 py-1 text-sm font-semibold text-slate-200 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                  onClick={() => {
+                    setBaixaModalOpen(false);
+                    setBaixaErro(null);
+                  }}
+                >
+                  Fechar
+                </button>
+              </div>
+              {baixaErro && (
+                <div className="mb-3 rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-200 ring-1 ring-rose-500/40">
+                  {baixaErro}
+                </div>
+              )}
+              <div className="grid gap-3 text-sm md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <select
+                    value={baixaProdutoId}
+                    onChange={(e) => setBaixaProdutoId(e.target.value)}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                  >
+                    <option value="">Escolha o produto</option>
+                    {produtos.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.codigo} - {p.nome}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400">Quantidade</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={baixaQtd}
+                    onChange={(e) => setBaixaQtd(e.target.value)}
+                    placeholder="Quantidade"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400">Motivo</label>
+                  <input
+                    value={baixaMotivo}
+                    onChange={(e) => setBaixaMotivo(e.target.value.toUpperCase())}
+                    placeholder="Motivo"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                  />
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBaixaProdutoId("");
+                    setBaixaQtd("");
+                    setBaixaMotivo("");
+                    setBaixaErro(null);
+                  }}
+                  className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                >
+                  Limpar
+                </button>
+                <button
+                  type="button"
+                  onClick={enviarBaixa}
+                  className="rounded-lg bg-rose-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-400"
+                >
+                  Registrar baixa
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {(carregandoCompra || detalheCompra) && (

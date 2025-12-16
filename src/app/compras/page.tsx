@@ -202,18 +202,23 @@ export default function ComprasPage() {
     return query ? `?${query}` : "";
   };
 
+  const unwrapProducts = (data: Product[] | { items?: Product[] } | null | undefined) => {
+    if (!data) return [];
+    return Array.isArray(data) ? data : data.items ?? [];
+  };
+
   const loadBases = async () => {
     const [forn, tp, ca, prd] = await Promise.all([
       apiFetch<Supplier[]>("/produtos/fornecedores"),
       apiFetch<PaymentType[]>("/financeiro/tipos-pagamento"),
       apiFetch<CardAccount[]>("/financeiro/cartoes-contas"),
-      apiFetch<Product[]>("/produtos"),
+      apiFetch<Product[] | { items?: Product[] }>("/produtos?limit=1000"),
     ]);
     const fornecedoresPrincipais = (forn ?? []).filter((f) => f.principal ?? true);
     setSuppliers(fornecedoresPrincipais);
     setTypes(tp || []);
     setCards(ca || []);
-    setProducts(prd || []);
+    setProducts(unwrapProducts(prd));
   };
 
   const loadCompras = async (override?: Partial<typeof filterState>) => {
