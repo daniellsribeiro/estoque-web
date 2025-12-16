@@ -65,6 +65,13 @@ type PurchaseResumo = {
   fornecedor?: { nome?: string | null } | null;
 };
 
+type GastoResumo = {
+  id: string;
+  descricao?: string | null;
+  status?: string | null;
+  fornecedor?: { nome?: string | null } | null;
+};
+
 type ExpenseDetail = {
   id: string;
   data?: string | null;
@@ -129,9 +136,9 @@ const getTipoDesc = (p: PurchasePayment): string => {
 };
 
 const statusValorClass = (status: string) => {
-  const norm = (status || "").toLowerCase();
-  if (norm.includes("paga")) return "text-emerald-400";
-  if (norm.includes("pend")) return "text-amber-300";
+  const norm = (status || "").toLowerCase().trim();
+  if (/(pag|quit|liq|receb)/.test(norm)) return "text-emerald-400";
+  if (/(pend|aguard|abert)/.test(norm)) return "text-amber-300";
   return "text-slate-100";
 };
 
@@ -179,6 +186,7 @@ export default function PagamentosPage() {
   const [pagamentos, setPagamentos] = useState<PurchasePayment[]>([]);
   const [gastosPagamentos, setGastosPagamentos] = useState<ExpensePayment[]>([]);
   const [comprasMap, setComprasMap] = useState<Record<string, PurchaseResumo>>({});
+  const [gastosMap, setGastosMap] = useState<Record<string, GastoResumo>>({});
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [showCards, setShowCards] = useState(false);
@@ -203,12 +211,13 @@ export default function PagamentosPage() {
 
   const loadAll = async () => {
     try {
-      const [t, c, pays, gastosPays, comprasList] = await Promise.all([
+      const [t, c, pays, gastosPays, comprasList, gastosList] = await Promise.all([
         apiFetch<PaymentType[]>("/financeiro/tipos-pagamento"),
         apiFetch<CardAccount[]>("/financeiro/cartoes-contas"),
         apiFetch<PurchasePayment[]>("/compras/pagamentos"),
         apiFetch<ExpensePayment[]>("/gastos/pagamentos"),
         apiFetch<PurchaseResumo[]>("/compras"),
+        apiFetch<GastoResumo[]>("/gastos"),
       ]);
       setTypes(t ?? []);
       setCards(c ?? []);
@@ -219,6 +228,11 @@ export default function PagamentosPage() {
         map[cmp.id] = { id: cmp.id, fornecedor: cmp.fornecedor };
       });
       setComprasMap(map);
+      const gastosIdx: Record<string, GastoResumo> = {};
+      (gastosList ?? []).forEach((g) => {
+        gastosIdx[g.id] = { id: g.id, descricao: g.descricao, status: g.status, fornecedor: g.fornecedor };
+      });
+      setGastosMap(gastosIdx);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados");
@@ -448,7 +462,7 @@ export default function PagamentosPage() {
                 }}
                 className="rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow hover:bg-cyan-400 transition"
               >
-                {showCardForm ? "Fechar" : "Adicionar cartao/conta"}
+                {showCardForm ? "Fechar" : "Adicionar cartão/conta"}
               </button>
               <button
                 onClick={() => {
@@ -850,12 +864,25 @@ export default function PagamentosPage() {
                       const isGasto = isExpenseRow(p);
                       const id = p.id;
                       const fornecedorNome = isGasto
-                        ? (p as ExpensePayment).gasto?.descricao || (p as ExpensePayment).gasto?.id || "-"
+                        ? gastosMap[(p as ExpensePayment).gasto?.id || ""]?.fornecedor?.nome ||
+                          (p as ExpensePayment).gasto?.descricao ||
+                          (p as ExpensePayment).gasto?.id ||
+                          "-"
                         : (p as PurchasePayment).compra?.fornecedor?.nome ||
                           (p as PurchasePayment).compra?.id
                           ? comprasMap[(p as PurchasePayment).compra!.id]?.fornecedor?.nome || "-"
                           : "-";
-                      const valorClass = statusValorClass(p.statusPagamento);
+                      const gastoStatus = isGasto ? gastosMap[(p as ExpensePayment).gasto?.id || ""]?.status : undefined;
+                      const statusParaCor = gastoStatus ?? p.statusPagamento ?? "";
+                      const valorClass = statusValorClass(statusParaCor);
+                      console.log("extrato: linha", {
+                        id,
+                        tipo: isGasto ? "gasto" : "compra",
+                        statusPagamento: p.statusPagamento,
+                        gastoStatus,
+                        statusUsado: statusParaCor,
+                        class: valorClass,
+                      });
                       return (
                         <tr key={id} className="border-t border-slate-800">
                           <td className="px-4 py-2">{p.nParcela}</td>

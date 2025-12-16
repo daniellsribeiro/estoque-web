@@ -23,7 +23,10 @@ type Expense = {
   parcelas: number;
   totalCompra: number;
   status: string;
+  observacao?: string | null;
   observacoes?: string | null;
+  itens?: Array<{ id?: string; descricaoItem?: string; qtde?: number | null; valorUnit?: number | null; valorTotal?: number | null }>;
+  pagamentos?: ExpensePayment[];
 };
 type ExpensePayment = {
   id: string;
@@ -62,6 +65,17 @@ const parseCurrency = (value: string) => {
 type ItemInput = { descricao: string; qtde: string; valorUnit: string };
 
 export default function GastosPage() {
+  const makeInitialForm = () => ({
+    data: new Date().toISOString().slice(0, 10),
+    descricao: "",
+    tipoPagamentoId: "",
+    cartaoContaId: "",
+    fornecedorId: "",
+    parcelas: 1,
+    total: "0,00",
+    observacoes: "",
+  });
+
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [fornecedorBusca, setFornecedorBusca] = useState("");
   const [showSupplierModal, setShowSupplierModal] = useState(false);
@@ -77,23 +91,27 @@ export default function GastosPage() {
   const [types, setTypes] = useState<PaymentType[]>([]);
   const [cards, setCards] = useState<CardAccount[]>([]);
   const [gastos, setGastos] = useState<Expense[]>([]);
-  const [pagamentos, setPagamentos] = useState<ExpensePayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [detalhesGastoId, setDetalhesGastoId] = useState<string | null>(null);
-
-  const [form, setForm] = useState({
-    data: new Date().toISOString().slice(0, 10),
-    descricao: "",
-    tipoPagamentoId: "",
-    cartaoContaId: "",
-    fornecedorId: "",
-    parcelas: 1,
-    total: "0,00",
-    observacoes: "",
+  const [detalheGasto, setDetalheGasto] = useState<Expense | null>(null);
+  const [pagamentosGasto, setPagamentosGasto] = useState<ExpensePayment[]>([]);
+  const [pagamentosLoading, setPagamentosLoading] = useState(false);
+  const [filtroDescricao, setFiltroDescricao] = useState("");
+  const [filtroDataInicio, setFiltroDataInicio] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().slice(0, 10);
   });
+  const [filtroDataFim, setFiltroDataFim] = useState(() => new Date().toISOString().slice(0, 10));
+  const [filtroFornecedorId, setFiltroFornecedorId] = useState("");
+  const [filtroTipoPagamentoId, setFiltroTipoPagamentoId] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("");
+
+  const [form, setForm] = useState(makeInitialForm());
   const [itens, setItens] = useState<ItemInput[]>([{ descricao: "", qtde: "1", valorUnit: "0,00" }]);
+  const [mostrarNovoGasto, setMostrarNovoGasto] = useState(false);
 
   const totalGasto = useMemo(
     () =>
@@ -120,27 +138,62 @@ export default function GastosPage() {
     return cards;
   }, [cards, requiresCard, tipoDesc, isCredito]);
 
+  const filterState = {
+    descricao: filtroDescricao.trim(),
+    dataInicio: filtroDataInicio,
+    dataFim: filtroDataFim,
+    fornecedorId: filtroFornecedorId,
+    tipoPagamentoId: filtroTipoPagamentoId,
+    status: filtroStatus,
+  };
+
   const fornecedoresFiltrados = useMemo(() => {
     const term = fornecedorBusca.trim().toLowerCase();
     if (!term) return suppliers;
     return suppliers.filter((f) => f.nome.toLowerCase().includes(term));
   }, [fornecedorBusca, suppliers]);
+  const statusOptions = useMemo(() => {
+    const base = ["pendente", "pago", "cancelado"];
+    const extra = gastos.map((g) => (g.status || "").toLowerCase()).filter(Boolean);
+    return Array.from(new Set([...base, ...extra]));
+  }, [gastos]);
 
-  const loadAll = async () => {
+  const buildGastosQuery = (override?: Partial<typeof filterState>) => {
+    const filters = { ...filterState, ...override };
+    const params = new URLSearchParams();
+    if (filters.descricao) params.append("descricao", filters.descricao);
+    if (filters.dataInicio) params.append("dataInicio", filters.dataInicio);
+    if (filters.dataFim) params.append("dataFim", filters.dataFim);
+    if (filters.fornecedorId) params.append("fornecedorId", filters.fornecedorId);
+    if (filters.tipoPagamentoId) params.append("tipoPagamentoId", filters.tipoPagamentoId);
+    if (filters.tipoPagamentoId) params.append("tipoPagamento", filters.tipoPagamentoId);
+    if (filters.status) params.append("status", filters.status);
+    const query = params.toString();
+    return query ? `?${query}` : "";
+  };
+
+  const loadBases = async () => {
     try {
-      setLoading(true);
-      const [forn, tp, ca, gs, pays] = await Promise.all([
+      const [forn, tp, ca] = await Promise.all([
         apiFetch<Supplier[]>("/produtos/fornecedores"),
         apiFetch<PaymentType[]>("/financeiro/tipos-pagamento"),
         apiFetch<CardAccount[]>("/financeiro/cartoes-contas"),
-        apiFetch<Expense[]>("/gastos"),
-        apiFetch<ExpensePayment[]>("/gastos/pagamentos"),
       ]);
       setSuppliers(forn || []);
       setTypes(tp || []);
       setCards(ca || []);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao carregar dados");
+    }
+  };
+
+  const loadGastos = async (overrideFilters?: Partial<typeof filterState>) => {
+    try {
+      setLoading(true);
+      const query = buildGastosQuery(overrideFilters);
+      const [gs] = await Promise.all([apiFetch<Expense[]>(`/gastos${query}`)]);
       setGastos(gs || []);
-      setPagamentos(pays || []);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados");
@@ -150,8 +203,15 @@ export default function GastosPage() {
   };
 
   useEffect(() => {
-    void loadAll();
+    void (async () => {
+      await loadBases();
+      await loadGastos();
+    })();
   }, []);
+
+  useEffect(() => {
+    void loadGastos();
+  }, [filtroDescricao, filtroDataInicio, filtroDataFim, filtroFornecedorId, filtroTipoPagamentoId, filtroStatus]);
 
   useEffect(() => {
     setForm((p) => ({
@@ -200,7 +260,7 @@ export default function GastosPage() {
       setMessage("Gasto registrado");
       setItens([{ descricao: "", qtde: "1", valorUnit: "0,00" }]);
       setForm((p) => ({ ...p, total: "0,00", descricao: "", observacoes: "" }));
-      await loadAll();
+      await loadGastos();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar gasto");
       setMessage(null);
@@ -249,14 +309,54 @@ export default function GastosPage() {
   };
 
   const gastosFiltrados = gastos;
-  const pagamentosSelecionados = useMemo(
-    () => (detalhesGastoId ? pagamentos.filter((p) => p.gasto.id === detalhesGastoId) : []),
-    [detalhesGastoId, pagamentos],
-  );
-  const gastoSelecionado = useMemo(
-    () => (detalhesGastoId ? gastos.find((g) => g.id === detalhesGastoId) || null : null),
-    [detalhesGastoId, gastos],
-  );
+  const pagamentosSelecionados = pagamentosGasto;
+  const gastoSelecionado = useMemo(() => {
+    if (detalheGasto) return detalheGasto;
+    return detalhesGastoId ? gastos.find((g) => g.id === detalhesGastoId) || null : null;
+  }, [detalheGasto, detalhesGastoId, gastos]);
+  const resetGastoForm = () => {
+    setForm(makeInitialForm());
+    setItens([{ descricao: "", qtde: "1", valorUnit: "0,00" }]);
+    setMostrarNovoGasto(false);
+    setError(null);
+  };
+  const abrirDetalhesGasto = async (id: string) => {
+    setDetalhesGastoId(id);
+    setPagamentosLoading(true);
+    try {
+      const data = await apiFetch<Expense>(`/gastos/${id}`);
+      setDetalheGasto(data || null);
+      setPagamentosGasto(data?.pagamentos || []);
+      setError(null);
+    } catch (err) {
+      setDetalheGasto(null);
+      setPagamentosGasto([]);
+      setError(err instanceof Error ? err.message : "Erro ao carregar detalhes do gasto");
+    } finally {
+      setPagamentosLoading(false);
+    }
+  };
+
+  const resetFiltros = () => {
+    const d = new Date();
+    const fim = d.toISOString().slice(0, 10);
+    d.setDate(d.getDate() - 30);
+    const ini = d.toISOString().slice(0, 10);
+    setFiltroDescricao("");
+    setFiltroDataInicio(ini);
+    setFiltroDataFim(fim);
+    setFiltroFornecedorId("");
+    setFiltroTipoPagamentoId("");
+    setFiltroStatus("");
+    return {
+      descricao: "",
+      dataInicio: ini,
+      dataFim: fim,
+      fornecedorId: "",
+      tipoPagamentoId: "",
+      status: "",
+    };
+  };
 
   return (
     <ProtectedShell title="Gastos" subtitle="Despesas operacionais e pagamentos em cartão/PIX.">
@@ -271,8 +371,8 @@ export default function GastosPage() {
         </div>
       )}
 
-      <div className="space-y-6">
-        <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
+        {mostrarNovoGasto && (
+        <div className="mt-4 rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-semibold text-slate-50">Novo gasto</h3>
@@ -458,19 +558,125 @@ export default function GastosPage() {
             </div>
           </div>
 
-          <div className="mt-4 flex justify-end">
-            <button
-              onClick={handleSubmit}
-              className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300"
-            >
-              Salvar gasto
-            </button>
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={resetGastoForm}
+                className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:border-rose-500"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmit}
+                className="ml-2 rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300"
+              >
+                Salvar gasto
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
-        <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
-          <h3 className="text-lg font-semibold text-slate-50">Gastos</h3>
-          <p className="text-sm text-slate-400">Selecione para ver detalhes e parcelas.</p>
+        <div className="mt-6 rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-50">Gastos</h3>
+              <p className="text-sm text-slate-400">Selecione para ver detalhes e parcelas.</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setMostrarNovoGasto((v) => !v)}
+                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-500"
+              >
+                {mostrarNovoGasto ? "Fechar novo gasto" : "Adicionar novo gasto"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void (async () => {
+                  await loadBases();
+                  await loadGastos();
+                })()}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:border-cyan-400"
+              >
+                Atualizar
+              </button>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 items-end">
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">Descrição</span>
+              <input
+                value={filtroDescricao}
+                onChange={(e) => setFiltroDescricao(e.target.value)}
+                placeholder="Ex.: Tag, frete..."
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">Data inicial</span>
+              <input
+                type="date"
+                value={filtroDataInicio}
+                onChange={(e) => setFiltroDataInicio(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">Data final</span>
+              <input
+                type="date"
+                value={filtroDataFim}
+                onChange={(e) => setFiltroDataFim(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">Fornecedor</span>
+              <select
+                value={filtroFornecedorId}
+                onChange={(e) => setFiltroFornecedorId(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              >
+                <option value="">Todos</option>
+                {suppliers.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.nome}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">Tipo de pagamento</span>
+              <select
+                value={filtroTipoPagamentoId}
+                onChange={(e) => setFiltroTipoPagamentoId(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              >
+                <option value="">Todos</option>
+                {types.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.descricao}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs text-slate-400">Status</span>
+              <select
+                value={filtroStatus}
+                onChange={(e) => setFiltroStatus(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              >
+                <option value="">Todos</option>
+                {statusOptions.map((s) => (
+                  <option key={s} value={s}>
+                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
           <div className="mt-3 max-h-80 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
             {loading ? (
               <div className="p-3 text-sm text-slate-400">Carregando...</div>
@@ -501,7 +707,7 @@ export default function GastosPage() {
                       <td className="px-4 py-2 text-right">
                         <button
                           className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                          onClick={() => setDetalhesGastoId(g.id)}
+                onClick={() => void abrirDetalhesGasto(g.id)}
                         >
                           Detalhes
                         </button>
@@ -513,7 +719,6 @@ export default function GastosPage() {
             )}
           </div>
         </div>
-      </div>
 
       {showSupplierModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4">
@@ -605,7 +810,12 @@ export default function GastosPage() {
               </div>
               <button
                 type="button"
-                onClick={() => setDetalhesGastoId(null)}
+                onClick={() => {
+                  setDetalhesGastoId(null);
+                  setDetalheGasto(null);
+                  setPagamentosGasto([]);
+                  setPagamentosLoading(false);
+                }}
                 className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
               >
                 Fechar
@@ -642,16 +852,49 @@ export default function GastosPage() {
                     <div className="text-sm font-semibold text-slate-100">{gastoSelecionado.fornecedor?.nome || "-"}</div>
                   </div>
                 </div>
-                {gastoSelecionado.observacoes && (
-                  <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm text-slate-200">
-                    {gastoSelecionado.observacoes}
+                <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm text-slate-200">
+                  <div className="text-xs text-slate-400">Observações</div>
+                  <div className="mt-1 whitespace-pre-wrap text-slate-100">
+                    {(gastoSelecionado.observacoes ?? gastoSelecionado.observacao ?? "").trim() || "Sem observações."}
                   </div>
-                )}
+                </div>
               </>
             )}
 
-            <div className="mt-5 max-h-[420px] overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
-              {pagamentosSelecionados.length === 0 ? (
+            {gastoSelecionado?.itens?.length ? (
+              <>
+                <div className="mt-4 text-xs uppercase tracking-wide text-slate-400">Itens</div>
+                <div className="mt-1 max-h-64 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+                  <table className="min-w-full">
+                    <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
+                      <tr>
+                        <th className="px-4 py-2">Item</th>
+                        <th className="px-4 py-2">Qtde</th>
+                        <th className="px-4 py-2">Valor unit.</th>
+                        <th className="px-4 py-2">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {gastoSelecionado.itens.map((it, idx) => (
+                        <tr key={it.id || idx} className="border-t border-slate-800">
+                          <td className="px-4 py-2">{it.descricaoItem || "-"}</td>
+                          <td className="px-4 py-2">{it.qtde ?? "-"}</td>
+                          <td className="px-4 py-2">R$ {Number(it.valorUnit || 0).toFixed(2)}</td>
+                          <td className="px-4 py-2">R$ {Number(it.valorTotal || 0).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : null}
+
+            <div className="mt-5">
+              <div className="text-xs uppercase tracking-wide text-slate-400">Parcelas</div>
+              <div className="mt-1 max-h-[420px] overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+              {pagamentosLoading ? (
+                <div className="p-3 text-slate-400">Carregando parcelas...</div>
+              ) : pagamentosSelecionados.length === 0 ? (
                 <div className="p-3 text-slate-400">Sem parcelas cadastradas.</div>
               ) : (
                 <table className="min-w-full">
@@ -679,6 +922,7 @@ export default function GastosPage() {
                   </tbody>
                 </table>
               )}
+              </div>
             </div>
           </div>
         </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ProtectedShell } from "@/components/protected-shell";
 import { apiFetch } from "@/lib/api-client";
 
@@ -30,6 +30,7 @@ type PurchaseDetail = Purchase & {
   parcelas: number;
   cartaoConta?: CardAccount | null;
   itens?: { id: string; qtde: number; valorUnit: number; valorTotal: number; item?: { nome: string; codigo: string } }[];
+  pagamentos?: PurchasePayment[];
 };
 type PurchasePayment = {
   id: string;
@@ -69,12 +70,21 @@ const isValidEmail = (email: string) => /^\S+@\S+\.\S+$/.test(email);
 type ItemInput = { produtoId: string; qtde: string; valorUnit: string; search: string };
 
 export default function ComprasPage() {
+  const makeInitialForm = () => ({
+    data: new Date().toISOString().slice(0, 10),
+    fornecedorId: "",
+    tipoPagamentoId: "",
+    cartaoContaId: "",
+    parcelas: 1,
+    total: "0,00",
+    observacoes: "",
+  });
+
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [types, setTypes] = useState<PaymentType[]>([]);
   const [cards, setCards] = useState<CardAccount[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [compras, setCompras] = useState<Purchase[]>([]);
-  const [pagamentos, setPagamentos] = useState<PurchasePayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -97,18 +107,37 @@ export default function ComprasPage() {
   });
   const [salvandoFornecedor, setSalvandoFornecedor] = useState(false);
   const [salvandoCompra, setSalvandoCompra] = useState(false);
-
-  const [form, setForm] = useState({
-    data: new Date().toISOString().slice(0, 10),
-    fornecedorId: "",
-    tipoPagamentoId: "",
-    cartaoContaId: "",
-    parcelas: 1,
-    total: "0,00",
-    observacoes: "",
+  const [mostrarNovaCompra, setMostrarNovaCompra] = useState(false);
+  const [filtroDataInicio, setFiltroDataInicio] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().slice(0, 10);
   });
+  const [filtroDataFim, setFiltroDataFim] = useState(() => new Date().toISOString().slice(0, 10));
+  const [filtroFornecedorId, setFiltroFornecedorId] = useState("");
+  const [filtroTipoPagamentoId, setFiltroTipoPagamentoId] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("");
+  const filterState = {
+    dataInicio: filtroDataInicio,
+    dataFim: filtroDataFim,
+    fornecedorId: filtroFornecedorId,
+    tipoPagamentoId: filtroTipoPagamentoId,
+    status: filtroStatus,
+  };
+
+  const [form, setForm] = useState(makeInitialForm());
 
   const [itens, setItens] = useState<ItemInput[]>([{ produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
+  const [pagamentosCompra, setPagamentosCompra] = useState<PurchasePayment[]>([]);
+  const [pagamentosLoading, setPagamentosLoading] = useState(false);
+  const skipFirstFilterLoad = useRef(true);
+
+  const resetCompraForm = () => {
+    setForm(makeInitialForm());
+    setItens([{ produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
+    setMostrarNovaCompra(false);
+    setError(null);
+  };
 
   const totalCompra = useMemo(() => parseCurrency(form.total), [form.total]);
   const totalCompraZerado = totalCompra === 0;
@@ -161,24 +190,38 @@ export default function ComprasPage() {
     return suppliers.filter((f) => f.nome.toLowerCase().includes(term));
   }, [fornecedorBusca, suppliers]);
 
-  const loadAll = async () => {
+  const buildComprasQuery = (override?: Partial<typeof filterState>) => {
+    const filters = { ...filterState, ...override };
+    const params = new URLSearchParams();
+    if (filters.dataInicio) params.append("dataInicio", filters.dataInicio);
+    if (filters.dataFim) params.append("dataFim", filters.dataFim);
+    if (filters.fornecedorId) params.append("fornecedorId", filters.fornecedorId);
+    if (filters.tipoPagamentoId) params.append("tipoPagamentoId", filters.tipoPagamentoId);
+    if (filters.status) params.append("status", filters.status);
+    const query = params.toString();
+    return query ? `?${query}` : "";
+  };
+
+  const loadBases = async () => {
+    const [forn, tp, ca, prd] = await Promise.all([
+      apiFetch<Supplier[]>("/produtos/fornecedores"),
+      apiFetch<PaymentType[]>("/financeiro/tipos-pagamento"),
+      apiFetch<CardAccount[]>("/financeiro/cartoes-contas"),
+      apiFetch<Product[]>("/produtos"),
+    ]);
+    const fornecedoresPrincipais = (forn ?? []).filter((f) => f.principal ?? true);
+    setSuppliers(fornecedoresPrincipais);
+    setTypes(tp || []);
+    setCards(ca || []);
+    setProducts(prd || []);
+  };
+
+  const loadCompras = async (override?: Partial<typeof filterState>) => {
     try {
       setLoading(true);
-      const [forn, tp, ca, prd, comp, pays] = await Promise.all([
-        apiFetch<Supplier[]>("/produtos/fornecedores"),
-        apiFetch<PaymentType[]>("/financeiro/tipos-pagamento"),
-        apiFetch<CardAccount[]>("/financeiro/cartoes-contas"),
-        apiFetch<Product[]>("/produtos"),
-        apiFetch<Purchase[]>("/compras"),
-        apiFetch<PurchasePayment[]>("/compras/pagamentos"),
-      ]);
-      const fornecedoresPrincipais = (forn ?? []).filter((f) => f.principal ?? true);
-      setSuppliers(fornecedoresPrincipais);
-      setTypes(tp || []);
-      setCards(ca || []);
-      setProducts(prd || []);
+      const query = buildComprasQuery(override);
+      const comp = await apiFetch<Purchase[]>(`/compras${query}`);
       setCompras(comp || []);
-      setPagamentos(pays || []);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados");
@@ -188,8 +231,19 @@ export default function ComprasPage() {
   };
 
   useEffect(() => {
-    loadAll();
+    void (async () => {
+      await loadBases();
+      await loadCompras();
+    })();
   }, []);
+
+  useEffect(() => {
+    if (skipFirstFilterLoad.current) {
+      skipFirstFilterLoad.current = false;
+      return;
+    }
+    void loadCompras();
+  }, [filtroDataInicio, filtroDataFim, filtroFornecedorId, filtroTipoPagamentoId, filtroStatus]);
 
   useEffect(() => {
     if (!requiresCard) {
@@ -293,7 +347,7 @@ export default function ComprasPage() {
       setMessage("Compra registrada");
       setItens([{ produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
       setForm((p) => ({ ...p, total: "0,00", observacoes: "" }));
-      await loadAll();
+      await loadCompras();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar compra");
       setMessage(null);
@@ -302,8 +356,16 @@ export default function ComprasPage() {
     }
   }
 
-  const parcelasSelecionadas = parcelasCompraId ? pagamentos.filter((p) => p.compra.id === parcelasCompraId) : [];
+  const parcelasSelecionadas = parcelasCompraId ? pagamentosCompra : [];
   const compraSelecionada = useMemo(() => compras.find((c) => c.id === parcelasCompraId), [compras, parcelasCompraId]);
+
+  const statusOpcoes = useMemo(() => {
+    const set = new Set<string>();
+    compras.forEach((c) => c.status && set.add(c.status));
+    return Array.from(set);
+  }, [compras]);
+
+  const comprasFiltradas = useMemo(() => compras, [compras]);
 
   const abrirDetalheCompra = async (id: string) => {
     setDetalheCarregando(true);
@@ -311,11 +373,27 @@ export default function ComprasPage() {
     try {
       const data = await apiFetch<PurchaseDetail>(`/compras/${id}`);
       setDetalheCompra(data ?? null);
+      setPagamentosCompra(data?.pagamentos || []);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar detalhes da compra");
     } finally {
       setDetalheCarregando(false);
+    }
+  };
+
+  const abrirParcelasCompra = async (id: string) => {
+    setParcelasCompraId(id);
+    setPagamentosLoading(true);
+    try {
+      const data = await apiFetch<PurchaseDetail>(`/compras/${id}`);
+      setPagamentosCompra(data?.pagamentos || []);
+      setError(null);
+    } catch (err) {
+      setPagamentosCompra([]);
+      setError(err instanceof Error ? err.message : "Erro ao carregar parcelas da compra");
+    } finally {
+      setPagamentosLoading(false);
     }
   };
 
@@ -333,7 +411,7 @@ export default function ComprasPage() {
       )}
 
       <div className="space-y-6">
-        <div className="space-y-6">
+        {mostrarNovaCompra && (
           <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
             <div className="flex items-center justify-between">
               <div>
@@ -606,22 +684,118 @@ export default function ComprasPage() {
 
             <div className="mt-4 flex justify-end">
               <button
+                type="button"
+                onClick={resetCompraForm}
+                className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:border-rose-500"
+              >
+                Cancelar
+              </button>
+              <button
                 onClick={() => void handleSubmit()}
                 disabled={salvandoCompra}
-                className="rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
+                className="ml-2 rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
               >
                 {salvandoCompra ? "Salvando..." : "Salvar compra"}
               </button>
             </div>
           </div>
 
-          <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
-            <h3 className="text-lg font-semibold text-slate-50">Compras</h3>
-            <p className="text-sm text-slate-400">Selecione para ver parcelas.</p>
+        )}
+
+        <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-50">Compras</h3>
+              <p className="text-sm text-slate-400">Selecione para ver parcelas.</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setMostrarNovaCompra((v) => !v)}
+                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-500"
+              >
+                {mostrarNovaCompra ? "Fechar nova compra" : "Adicionar nova compra"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void loadCompras()}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 transition hover:border-cyan-400"
+              >
+                Atualizar
+              </button>
+            </div>
+          </div>
+
+            <div className="mt-3 grid gap-3 md:grid-cols-5 text-sm">
+              <label className="space-y-1">
+                <span className="text-xs text-slate-400">Data inicial</span>
+                <input
+                  type="date"
+                  value={filtroDataInicio}
+                  onChange={(e) => setFiltroDataInicio(e.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-slate-400">Data final</span>
+                <input
+                  type="date"
+                  value={filtroDataFim}
+                  onChange={(e) => setFiltroDataFim(e.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-slate-400">Fornecedor principal</span>
+                <select
+                  value={filtroFornecedorId}
+                  onChange={(e) => setFiltroFornecedorId(e.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                >
+                  <option value="">Todos</option>
+                  {suppliers.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.nome}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-slate-400">Tipo de pagamento</span>
+                <select
+                  value={filtroTipoPagamentoId}
+                  onChange={(e) => setFiltroTipoPagamentoId(e.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                >
+                  <option value="">Todos</option>
+                  {types.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.descricao}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs text-slate-400">Status</span>
+                <select
+                  value={filtroStatus}
+                  onChange={(e) => setFiltroStatus(e.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                >
+                  <option value="">Todos</option>
+                  {statusOpcoes.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
             <div className="mt-3 max-h-80 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
               {loading ? (
                 <div className="p-3 text-sm text-slate-400">Carregando...</div>
-              ) : compras.length === 0 ? (
+              ) : comprasFiltradas.length === 0 ? (
                 <div className="p-3 text-sm text-slate-400">Nenhuma compra.</div>
               ) : (
                 <table className="min-w-full text-sm text-slate-200">
@@ -636,7 +810,7 @@ export default function ComprasPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {compras.map((c) => (
+                    {comprasFiltradas.map((c) => (
                       <tr key={c.id} className="border-t border-slate-800">
                         <td className="px-4 py-2">{c.data.slice(0, 10) || ""}</td>
                         <td className="px-4 py-2">{c.fornecedor.nome || "-"}</td>
@@ -653,7 +827,7 @@ export default function ComprasPage() {
                             </button>
                             <button
                               className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                              onClick={() => setParcelasCompraId(c.id)}
+                            onClick={() => void abrirParcelasCompra(c.id)}
                             >
                               Parcelas
                             </button>
@@ -667,8 +841,6 @@ export default function ComprasPage() {
             </div>
           </div>
         </div>
-
-      </div>
 
       {(detalheCompra || detalheCarregando) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4">
@@ -788,7 +960,11 @@ export default function ComprasPage() {
               </div>
               <button
                 type="button"
-                onClick={() => setParcelasCompraId(null)}
+                onClick={() => {
+                  setParcelasCompraId(null);
+                  setPagamentosCompra([]);
+                  setPagamentosLoading(false);
+                }}
                 className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
               >
                 Fechar
@@ -796,7 +972,9 @@ export default function ComprasPage() {
             </div>
 
             <div className="mt-4 max-h-[420px] overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
-              {parcelasSelecionadas.length === 0 ? (
+              {pagamentosLoading ? (
+                <div className="p-3 text-slate-400">Carregando parcelas...</div>
+              ) : parcelasSelecionadas.length === 0 ? (
                 <div className="p-3 text-slate-400">Sem parcelas cadastradas.</div>
               ) : (
                 <table className="min-w-full">
