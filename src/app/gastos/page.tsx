@@ -158,6 +158,29 @@ export default function GastosPage() {
     return Array.from(new Set([...base, ...extra]));
   }, [gastos]);
 
+  const statusClass = (status?: string) => {
+    const s = (status || "").toLowerCase();
+    if (s === "pago" || s === "paga") return "text-emerald-300";
+    if (s === "pendente") return "text-amber-300";
+    return "text-slate-300";
+  };
+
+  const normalizeErrorMessage = (err: unknown, fallback = "Erro ao salvar gasto"): string => {
+    const fromResponse = (err as any)?.response?.message;
+    const message = (err as any)?.message ?? fromResponse;
+    let text: string | undefined;
+    if (Array.isArray(message)) text = message.join(" | ");
+    else if (typeof message === "string") text = message;
+    else if (Array.isArray(fromResponse)) text = (fromResponse as string[]).join(" | ");
+    else if (typeof fromResponse === "string") text = fromResponse;
+    const normalized = text?.toString() || fallback;
+    const lower = normalized.toLowerCase();
+    if (lower.includes("descricao") && (lower.includes("must") || lower.includes("longer") || lower.includes("min"))) {
+      return "Descrição é obrigatória.";
+    }
+    return normalized;
+  };
+
   const buildGastosQuery = (override?: Partial<typeof filterState>) => {
     const filters = { ...filterState, ...override };
     const params = new URLSearchParams();
@@ -241,7 +264,7 @@ export default function GastosPage() {
     }
     const body = {
       data: form.data,
-      descricao: form.descricao || undefined,
+      descricao: form.descricao.trim(),
       fornecedorId: form.fornecedorId || undefined,
       tipoPagamentoId: form.tipoPagamentoId,
       cartaoContaId: requiresCard ? form.cartaoContaId : undefined,
@@ -262,7 +285,7 @@ export default function GastosPage() {
       setForm((p) => ({ ...p, total: "0,00", descricao: "", observacoes: "" }));
       await loadGastos();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao salvar gasto");
+      setError(normalizeErrorMessage(err));
       setMessage(null);
     }
   };
@@ -677,7 +700,51 @@ export default function GastosPage() {
               </select>
             </label>
           </div>
-          <div className="mt-3 max-h-80 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+          <div className="mt-3 space-y-3 lg:hidden">
+            {loading ? (
+              <div className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-300 ring-1 ring-slate-800">
+                Carregando...
+              </div>
+            ) : gastosFiltrados.length === 0 ? (
+              <div className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-300 ring-1 ring-slate-800">
+                Nenhum gasto.
+              </div>
+            ) : (
+              gastosFiltrados.map((g) => (
+                <div
+                  key={g.id}
+                  className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="text-xs text-slate-400">{g.data.slice(0, 10) || "-"}</p>
+                      <p className="text-base font-semibold text-slate-50">{g.descricao || "-"}</p>
+                      <p className="text-xs text-slate-400">
+                        {g.fornecedor?.nome || "Sem fornecedor"}{" "}
+                        {g.fornecedor?.nome && g.tipoPagamento?.descricao ? "·" : ""}{" "}
+                        {g.tipoPagamento?.descricao || ""}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-400">Total</p>
+                      <p className="text-lg font-bold text-slate-50">R$ {Number(g.totalCompra || 0).toFixed(2)}</p>
+                      <p className={`text-xs capitalize ${statusClass(g.status)}`}>{g.status}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                      onClick={() => void abrirDetalhesGasto(g.id)}
+                    >
+                      Detalhes
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="mt-3 max-h-80 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60 hidden lg:block">
             {loading ? (
               <div className="p-3 text-sm text-slate-400">Carregando...</div>
             ) : gastosFiltrados.length === 0 ? (
@@ -703,11 +770,11 @@ export default function GastosPage() {
                       <td className="px-4 py-2">{g.fornecedor?.nome || "-"}</td>
                       <td className="px-4 py-2">{g.tipoPagamento?.descricao || "-"}</td>
                       <td className="px-4 py-2">R$ {Number(g.totalCompra || 0).toFixed(2)}</td>
-                      <td className="px-4 py-2 capitalize">{g.status}</td>
+                      <td className={`px-4 py-2 capitalize ${statusClass(g.status)}`}>{g.status}</td>
                       <td className="px-4 py-2 text-right">
                         <button
                           className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                onClick={() => void abrirDetalhesGasto(g.id)}
+                          onClick={() => void abrirDetalhesGasto(g.id)}
                         >
                           Detalhes
                         </button>

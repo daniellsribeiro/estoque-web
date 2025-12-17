@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ProtectedShell } from "@/components/protected-shell";
@@ -43,6 +43,10 @@ type Sale = {
   parcelas: number;
   totalVenda: number;
   status: string;
+  dataDevolucao?: string | null;
+  motivoDevolucao?: string | null;
+  dataCancelamento?: string | null;
+  motivoCancelamento?: string | null;
 };
 type SaleDetail = Sale & {
   observacoes?: string | null;
@@ -118,6 +122,12 @@ export default function VendasPage() {
   const [mensagem, setMensagem] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [payModal, setPayModal] = useState<{ id: string; data: string } | null>(null);
+  const [devolucaoModal, setDevolucaoModal] = useState<{ id: string; data: string; motivo: string }>({
+    id: "",
+    data: todayLocal(),
+    motivo: "",
+  });
+  const [cancelModal, setCancelModal] = useState<{ id: string; data: string; motivo: string } | null>(null);
   const [cancelando, setCancelando] = useState(false);
   const [showClienteModal, setShowClienteModal] = useState(false);
   const [novoCliente, setNovoCliente] = useState({ nome: "", telefone: "", email: "", observacoes: "" });
@@ -289,7 +299,12 @@ export default function VendasPage() {
       return matchTipo && matchCor && matchMaterial;
     });
   }, [products, filtroTipo, filtroCor, filtroMaterial]);
-  const statusOptions = useMemo(() => ["pago", "pendente", "cancelada", "recebido"], []);
+  const statusOptions = useMemo(() => ["pago", "pendente", "cancelada", "recebido", "devolucao"], []);
+
+  const podeDevolver = (status?: string) => {
+    const s = (status || "").toLowerCase().trim();
+    return s === "paga" || s === "pago" || s === "recebido";
+  };
 
   const totalItens = useMemo(
     () =>
@@ -343,6 +358,7 @@ export default function VendasPage() {
   const totalColorClass = (status: string | undefined) => {
     const s = (status || "").toLowerCase();
     if (s.includes("cancel")) return "text-rose-400";
+    if (s.includes("devol")) return "text-rose-400";
     if (s.includes("receb")) return "text-emerald-300";
     if (s.includes("pag")) return "text-amber-300";
     if (s.includes("pend")) return "text-orange-300";
@@ -438,6 +454,28 @@ export default function VendasPage() {
     }
   };
 
+  const devolverVenda = async () => {
+    if (!devolucaoModal?.id) return;
+    if (!devolucaoModal.data) {
+      setErro("Informe a data de devolucao.");
+      return;
+    }
+    setErro(null);
+    try {
+      await apiFetch(`/vendas/${devolucaoModal.id}/devolver`, {
+        method: "PATCH",
+        body: JSON.stringify({ dataDevolucao: devolucaoModal.data, motivo: devolucaoModal.motivo || undefined }),
+      });
+      setMensagem("Venda devolvida.");
+      setDevolucaoModal({ id: "", data: todayLocal(), motivo: "" });
+      await carregarVendas();
+    if (detalhe && detalhe.id === devolucaoModal.id) {
+      await abrirDetalhe(detalhe.id);
+    }
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao devolver venda");
+    }
+  };
   const carregarTudo = async () => {
     setCarregando(true);
     try {
@@ -592,7 +630,7 @@ export default function VendasPage() {
       return false;
     });
     if (duplicated) {
-      setErro("Produto já adicionado. Ajuste a quantidade em vez de repetir.");
+      setErro("Produto jÃ¡ adicionado. Ajuste a quantidade em vez de repetir.");
       return;
     }
 
@@ -707,14 +745,30 @@ export default function VendasPage() {
     }
   };
 
-  const cancelarVenda = async (id: string) => {
+  const cancelarVenda = async () => {
+    if (!cancelModal?.id) return;
+    if (!cancelModal.data) {
+      setErro("Informe a data do cancelamento.");
+      return;
+    }
+    if (!cancelModal.motivo.trim()) {
+      setErro("Informe o motivo do cancelamento.");
+      return;
+    }
     try {
       setCancelando(true);
       setErro(null);
-      await apiFetch(`/vendas/${id}/cancelar`, { method: "PATCH" });
+      await apiFetch(`/vendas/${cancelModal.id}/cancelar`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          dataCancelamento: cancelModal.data,
+          motivoCancelamento: cancelModal.motivo,
+        }),
+      });
       setMensagem("Venda cancelada e estoque revertido.");
+      setCancelModal(null);
       await carregarTudo();
-      if (detalhe?.id === id) await abrirDetalhe(id);
+      if (detalhe?.id === cancelModal.id) await abrirDetalhe(cancelModal.id);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao cancelar venda");
     } finally {
@@ -784,7 +838,7 @@ export default function VendasPage() {
                   <>
                     <div>Total liquido (c/ taxa): R$ {totalLiquido.toFixed(2)}</div>
                     <div>
-                      Parcela bruta: R$ {valorParcela.toFixed(2)} • Parcela liquida: R$ {previewTaxa.liquidoParcela.toFixed(2)}
+                      Parcela bruta: R$ {valorParcela.toFixed(2)} â€¢ Parcela liquida: R$ {previewTaxa.liquidoParcela.toFixed(2)}
                     </div>
                   </>
                 ) : (
@@ -1029,7 +1083,7 @@ export default function VendasPage() {
                           onChange={(e) => {
                             const produtoId = e.target.value;
                             if (produtoId && itens.some((p, i) => i !== idx && p.produtoId === produtoId)) {
-                              setErro("Produto já adicionado. Ajuste a quantidade em vez de repetir.");
+                              setErro("Produto jÃ¡ adicionado. Ajuste a quantidade em vez de repetir.");
                               return;
                             }
                             const produto = products.find((p) => p.id === produtoId);
@@ -1199,7 +1253,88 @@ export default function VendasPage() {
             </label>
           </div>
 
-          <div className="mt-4 overflow-hidden rounded-lg border border-slate-800">
+          {/* Cards para telas menores que 1000px */}
+          <div className="mt-4 space-y-3 lg:hidden">
+            {vendas.length === 0 ? (
+              <div className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-300 ring-1 ring-slate-800">
+                Nenhuma venda registrada.
+              </div>
+            ) : (
+              vendas.map((v) => (
+                <div
+                  key={v.id}
+                  className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="text-xs text-slate-400">{new Date(v.data).toLocaleDateString()}</p>
+                      <p className="text-base font-semibold text-slate-50">{v.cliente?.nome || "-"}</p>
+                      <p className="text-xs text-slate-400">{v.tipoPagamento?.descricao || "-"}</p>
+                      <p className="text-xs text-slate-400">Parcelas: {v.parcelas}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-400">Total</p>
+                      <p className={`text-lg font-bold ${totalColorClass(v.status)}`}>R$ {v.totalVenda?.toFixed(2)}</p>
+                      <p className="text-xs capitalize text-slate-300">{v.status}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex w-full items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void abrirDetalhe(v.id)}
+                      className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                    >
+                      Detalhes
+                    </button>
+                    <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                      {podeDevolver(v.status) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const todaySp = todayLocal();
+                            setDevolucaoModal({ id: v.id, data: todaySp, motivo: "" });
+                          }}
+                          className="rounded-lg border border-amber-500 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:bg-amber-500/20"
+                        >
+                          Devolucao
+                        </button>
+                      )}
+                      {!["paga", "pago", "recebido", "cancelada", "cancelado", "devolucao"].includes(v.status) && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const todaySp = todayLocal();
+                              const saleDateStr = v.data ? v.data.slice(0, 10) : todaySp;
+                              const defaultDate = saleDateStr > todaySp ? saleDateStr : todaySp;
+                              setPayModal({ id: v.id, data: defaultDate });
+                            }}
+                            className="rounded-lg border border-emerald-500 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500 hover:text-slate-900"
+                          >
+                            Marcar pago
+                          </button>
+                          <button
+                            type="button"
+                          onClick={() => {
+                            const todaySp = todayLocal();
+                            setCancelModal({ id: v.id, data: todaySp, motivo: "" });
+                          }}
+                            className="rounded-lg border border-rose-500 px-3 py-2 text-xs font-semibold text-rose-100 transition hover:bg-rose-500 hover:text-slate-900 disabled:opacity-60"
+                            disabled={cancelando}
+                          >
+                            Cancelar
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Tabela para telas grandes */}
+          <div className="mt-4 overflow-hidden rounded-lg border border-slate-800 hidden lg:block">
             <table className="min-w-full divide-y divide-slate-800 text-sm">
               <thead className="bg-slate-900/70 text-slate-400">
                 <tr>
@@ -1222,39 +1357,58 @@ export default function VendasPage() {
                     </td>
                     <td className="px-4 py-2 text-center">{v.parcelas}</td>
                     <td className="px-4 py-2 text-center">
-                      <button
-                        type="button"
-                        onClick={() => void abrirDetalhe(v.id)}
-                        className="rounded-lg border border-cyan-500 px-3 py-1 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500 hover:text-slate-900"
-                      >
-                        Detalhes
-                      </button>
-                      {!["paga", "pago", "recebido", "cancelada", "cancelado"].includes(v.status) && (
-                        <div className="mt-2 flex items-center justify-center gap-2">
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="flex flex-wrap justify-center gap-2">
                           <button
                             type="button"
-                            onClick={() => {
-                              const todaySp = todayLocal();
-                              const saleDateStr = v.data ? v.data.slice(0, 10) : todaySp;
-                              const defaultDate = saleDateStr > todaySp ? saleDateStr : todaySp;
-                              setPayModal({ id: v.id, data: defaultDate });
-                            }}
-                            className="rounded-lg border border-emerald-500 px-2 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-500 hover:text-slate-900"
+                            onClick={() => void abrirDetalhe(v.id)}
+                            className="rounded-lg border border-cyan-500 px-3 py-1 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500 hover:text-slate-900"
                           >
-                            Marcar pago
+                            Detalhes
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => void cancelarVenda(v.id)}
-                            className="rounded-lg border border-rose-500 px-2 py-1 text-[11px] font-semibold text-rose-100 transition hover:bg-rose-500 hover:text-slate-900 disabled:opacity-60"
-                            disabled={cancelando}
-                          >
-                            Cancelar
-                          </button>
+                          {podeDevolver(v.status) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const todaySp = todayLocal();
+                                setDevolucaoModal({ id: v.id, data: todaySp, motivo: "" });
+                              }}
+                              className="rounded-lg border border-amber-500 px-3 py-1 text-[11px] font-semibold text-amber-200 transition hover:bg-amber-500/20"
+                            >
+                              Devolução
+                            </button>
+                          )}
                         </div>
-                      )}
+                        {!["paga", "pago", "recebido", "cancelada", "cancelado", "devolucao"].includes(v.status) && (
+                          <div className="flex flex-wrap justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const todaySp = todayLocal();
+                                const saleDateStr = v.data ? v.data.slice(0, 10) : todaySp;
+                                const defaultDate = saleDateStr > todaySp ? saleDateStr : todaySp;
+                                setPayModal({ id: v.id, data: defaultDate });
+                              }}
+                              className="rounded-lg border border-emerald-500 px-2 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-500 hover:text-slate-900"
+                            >
+                              Marcar pago
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const todaySp = todayLocal();
+                                setCancelModal({ id: v.id, data: todaySp, motivo: "" });
+                              }}
+                              className="rounded-lg border border-rose-500 px-2 py-1 text-[11px] font-semibold text-rose-100 transition hover:bg-rose-500 hover:text-slate-900 disabled:opacity-60"
+                              disabled={cancelando}
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </td>
-                  </tr>
+                </tr>
                 ))}
                 {vendas.length === 0 && (
                   <tr>
@@ -1323,6 +1477,98 @@ export default function VendasPage() {
         </div>
       )}
 
+      {devolucaoModal?.id && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/80 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-amber-700/60 bg-slate-950 p-5 max-h-[90vh] overflow-y-auto shadow-2xl scroll-soft">
+            <h4 className="text-lg font-semibold text-slate-50">Devolução da venda</h4>
+            <p className="text-sm text-slate-400">Informe a data e o motivo.</p>
+            <div className="mt-3 space-y-2 text-sm text-slate-200">
+              <label className="space-y-1">
+                <span className="text-slate-300">Data da devolução</span>
+                <input
+                  type="date"
+                  value={devolucaoModal.data}
+                  onChange={(e) => setDevolucaoModal((p) => (p ? { ...p, data: e.target.value } : p))}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-amber-500"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-slate-300">Motivo</span>
+                <textarea
+                  value={devolucaoModal.motivo}
+                  onChange={(e) => setDevolucaoModal((p) => (p ? { ...p, motivo: e.target.value } : p))}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-amber-500"
+                  rows={3}
+                  placeholder="Opcional"
+                />
+              </label>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDevolucaoModal({ id: "", data: todayLocal(), motivo: "" })}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-rose-500"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void devolverVenda()}
+                className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-amber-500"
+              >
+                Confirmar devolução
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelModal?.id && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/80 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-rose-700/60 bg-slate-950 p-5 max-h-[90vh] overflow-y-auto shadow-2xl scroll-soft">
+            <h4 className="text-lg font-semibold text-slate-50">Cancelar venda</h4>
+            <p className="text-sm text-slate-400">Informe a data e o motivo.</p>
+            <div className="mt-3 space-y-2 text-sm text-slate-200">
+              <label className="space-y-1">
+                <span className="text-slate-300">Data do cancelamento</span>
+                <input
+                  type="date"
+                  value={cancelModal.data}
+                  onChange={(e) => setCancelModal((p) => (p ? { ...p, data: e.target.value } : p))}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-rose-500"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-slate-300">Motivo</span>
+                <textarea
+                  value={cancelModal.motivo}
+                  onChange={(e) => setCancelModal((p) => (p ? { ...p, motivo: e.target.value } : p))}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-rose-500"
+                  rows={3}
+                  placeholder="Opcional"
+                />
+              </label>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCancelModal(null)}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-500"
+              >
+                Fechar
+              </button>
+              <button
+                type="button"
+                onClick={() => void cancelarVenda()}
+                disabled={cancelando}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-rose-500 disabled:opacity-60"
+              >
+                {cancelando ? "Cancelando..." : "Confirmar cancelamento"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {detalhe && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4 backdrop-blur">
           <div className="w-full max-w-5xl rounded-xl border border-slate-800 bg-slate-950 p-6 shadow-xl max-h-[90vh] overflow-y-auto scroll-soft">
@@ -1334,7 +1580,7 @@ export default function VendasPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {!["paga", "pago", "recebido", "cancelada", "cancelado"].includes(detalhe.status) && (
+                {!["paga", "pago", "recebido", "cancelada", "cancelado", "devolucao"].includes(detalhe.status) && (
                   <>
                     <button
                       type="button"
@@ -1350,7 +1596,12 @@ export default function VendasPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => void cancelarVenda(detalhe.id)}
+                      onClick={() => {
+                        const todaySp = todayLocal();
+                        const saleDateStr = detalhe.data ? detalhe.data.slice(0, 10) : todaySp;
+                        const defaultDate = saleDateStr > todaySp ? saleDateStr : todaySp;
+                        setCancelModal({ id: detalhe.id, data: defaultDate, motivo: "" });
+                      }}
                       className="rounded-lg border border-rose-500 px-3 py-1 text-xs font-semibold text-rose-100 transition hover:bg-rose-500 hover:text-slate-900"
                     >
                       Cancelar
@@ -1366,6 +1617,35 @@ export default function VendasPage() {
                 </button>
               </div>
             </div>
+
+            {(detalhe.dataDevolucao || detalhe.motivoDevolucao) && (
+              <div className="mt-3 rounded-lg border border-amber-700/60 bg-amber-900/20 p-3 text-sm text-amber-100">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  {detalhe.dataDevolucao && (
+                    <span className="font-semibold">
+                      Data da devolucao: {new Date(detalhe.dataDevolucao).toLocaleDateString()}
+                    </span>
+                  )}
+                  {detalhe.motivoDevolucao && (
+                    <span className="text-amber-50">Motivo: {detalhe.motivoDevolucao}</span>
+                  )}
+                </div>
+              </div>
+            )}
+            {(detalhe.dataCancelamento || detalhe.motivoCancelamento) && (
+              <div className="mt-3 rounded-lg border border-rose-700/60 bg-rose-900/20 p-3 text-sm text-rose-100">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  {detalhe.dataCancelamento && (
+                    <span className="font-semibold">
+                      Data do cancelamento: {new Date(detalhe.dataCancelamento).toLocaleDateString()}
+                    </span>
+                  )}
+                  {detalhe.motivoCancelamento && (
+                    <span className="text-rose-50">Motivo: {detalhe.motivoCancelamento}</span>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="mt-4 grid gap-3 md:grid-cols-3 text-sm text-slate-200">
               <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">

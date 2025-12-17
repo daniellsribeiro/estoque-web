@@ -370,6 +370,13 @@ export default function ComprasPage() {
     return Array.from(set);
   }, [compras]);
 
+  const statusClass = (status?: string) => {
+    const s = (status || "").toLowerCase();
+    if (s === "pago" || s === "paga") return "text-emerald-300";
+    if (s === "pendente") return "text-amber-300";
+    return "text-slate-300";
+  };
+
   const comprasFiltradas = useMemo(() => compras, [compras]);
 
   const abrirDetalheCompra = async (id: string) => {
@@ -797,7 +804,53 @@ export default function ComprasPage() {
               </label>
             </div>
 
-            <div className="mt-3 max-h-80 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+            <div className="mt-3 space-y-3 lg:hidden">
+              {loading ? (
+                <div className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-300 ring-1 ring-slate-800">
+                  Carregando...
+                </div>
+              ) : comprasFiltradas.length === 0 ? (
+                <div className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-300 ring-1 ring-slate-800">
+                  Nenhuma compra.
+                </div>
+              ) : (
+                comprasFiltradas.map((c) => (
+                  <div
+                    key={c.id}
+                    className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <p className="text-xs text-slate-400">{c.data.slice(0, 10) || "-"}</p>
+                        <p className="text-base font-semibold text-slate-50">{c.fornecedor.nome || "-"}</p>
+                        <p className="text-xs text-slate-400">{c.tipoPagamento.descricao || "-"}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[11px] uppercase tracking-wide text-slate-400">Total</p>
+                        <p className="text-lg font-bold text-slate-50">R$ {Number(c.totalCompra || 0).toFixed(2)}</p>
+                        <p className={`text-xs capitalize ${statusClass(c.status)}`}>{c.status}</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                        onClick={() => abrirDetalheCompra(c.id)}
+                      >
+                        Detalhes
+                      </button>
+                      <button
+                        className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                        onClick={() => void abrirParcelasCompra(c.id)}
+                      >
+                        Parcelas
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="mt-3 max-h-80 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60 hidden lg:block">
               {loading ? (
                 <div className="p-3 text-sm text-slate-400">Carregando...</div>
               ) : comprasFiltradas.length === 0 ? (
@@ -811,7 +864,7 @@ export default function ComprasPage() {
                       <th className="px-4 py-2">Tipo</th>
                       <th className="px-4 py-2">Total</th>
                       <th className="px-4 py-2">Status</th>
-                      <th className="px-4 py-2 text-right">Ações</th>
+                      <th className="px-4 py-2 text-right">A??es</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -821,7 +874,7 @@ export default function ComprasPage() {
                         <td className="px-4 py-2">{c.fornecedor.nome || "-"}</td>
                         <td className="px-4 py-2">{c.tipoPagamento.descricao || "-"}</td>
                         <td className="px-4 py-2">R$ {Number(c.totalCompra || 0).toFixed(2)}</td>
-                        <td className="px-4 py-2 capitalize">{c.status}</td>
+                        <td className={`px-4 py-2 capitalize ${statusClass(c.status)}`}>{c.status}</td>
                         <td className="px-4 py-2 text-right">
                           <div className="flex justify-end gap-2">
                             <button
@@ -832,7 +885,7 @@ export default function ComprasPage() {
                             </button>
                             <button
                               className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                            onClick={() => void abrirParcelasCompra(c.id)}
+                              onClick={() => void abrirParcelasCompra(c.id)}
                             >
                               Parcelas
                             </button>

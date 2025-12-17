@@ -392,7 +392,8 @@ export default function ProdutosPage() {
           </select>
         </div>
 
-        <div className="mt-4 overflow-auto rounded-lg border border-slate-800 bg-slate-900/50">
+        {/* Lista responsiva: tabela em telas médias+ e cards no mobile */}
+        <div className="mt-4 overflow-auto rounded-lg border border-slate-800 bg-slate-900/50 hidden lg:block">
           <table className="min-w-full text-sm text-slate-200">
             <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
               <tr>
@@ -404,18 +405,19 @@ export default function ProdutosPage() {
                 <th className="px-4 py-3">Tamanho</th>
                 <th className="px-4 py-3">Preco</th>
                 <th className="px-4 py-3">Observação</th>
+                <th className="px-4 py-3 text-right">Ações</th>
               </tr>
             </thead>
             <tbody>
               {loadingProducts ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-3 text-center text-slate-400">
+                  <td colSpan={9} className="px-4 py-3 text-center text-slate-400">
                     Carregando...
                   </td>
                 </tr>
               ) : products.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-3 text-center text-slate-400">
+                  <td colSpan={9} className="px-4 py-3 text-center text-slate-400">
                     Nenhum produto encontrado
                   </td>
                 </tr>
@@ -436,11 +438,92 @@ export default function ProdutosPage() {
                       {p.preco?.precoVendaAtual !== undefined ? `R$ ${p.preco.precoVendaAtual.toFixed(2)}` : "-"}
                     </td>
                     <td className="px-4 py-2">{p.observacao ?? "-"}</td>
+                    <td className="px-4 py-2">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openPriceEditor(p);
+                          }}
+                          className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                        >
+                          Preço
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            loadPriceHistory(p);
+                          }}
+                          className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                        >
+                          Histórico
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="mt-4 space-y-3 lg:hidden">
+          {loadingProducts ? (
+            <div className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800">Carregando...</div>
+          ) : products.length === 0 ? (
+            <div className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800">
+              Nenhum produto encontrado
+            </div>
+          ) : (
+            products.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setSelectedProduct(p)}
+                className="w-full text-left rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800 transition hover:bg-slate-800"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-slate-50">{p.nome}</p>
+                    <p className="text-xs text-slate-400">{p.codigo}</p>
+                  </div>
+                  <span className="text-xs font-semibold text-emerald-200">
+                    {p.preco?.precoVendaAtual !== undefined ? `R$ ${p.preco.precoVendaAtual.toFixed(2)}` : "-"}
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-300">
+                  <span>Tipo: {p.tipo?.nome ?? "-"}</span>
+                  <span>Cor: {p.cor?.nome ?? "-"}</span>
+                  <span>Material: {p.material?.nome ?? "-"}</span>
+                  <span>Tamanho: {p.tamanho?.nome ?? "-"}</span>
+                  <span className="col-span-2 text-slate-400">Obs: {p.observacao ?? "-"}</span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openPriceEditor(p);
+                    }}
+                    className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                  >
+                    Preço
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      loadPriceHistory(p);
+                    }}
+                    className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                  >
+                    Histórico
+                  </button>
+                </div>
+              </button>
+            ))
+          )}
         </div>
 
         <div className="mt-3 flex items-center justify-end gap-3 text-sm text-slate-200">

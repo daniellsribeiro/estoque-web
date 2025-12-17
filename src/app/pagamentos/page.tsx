@@ -386,20 +386,20 @@ export default function PagamentosPage() {
           method: "PATCH",
           body: JSON.stringify(payload),
         });
-        setMessage("Cart?o/conta atualizado");
+        setMessage("Cartão/conta atualizado");
       } else {
         await apiFetch("/financeiro/cartoes-contas", {
           method: "POST",
           body: JSON.stringify(payload),
         });
-        setMessage("Cart?o/conta cadastrado");
+        setMessage("Cartão/conta cadastrado");
       }
       setCardForm({ ativo: true });
       setEditingCardId(null);
       setShowCardForm(false);
       await loadAll();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao salvar cart?o/conta");
+      setError(err instanceof Error ? err.message : "Erro ao salvar cartão/conta");
     } finally {
       setSalvandoCard(false);
     }

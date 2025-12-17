@@ -13,6 +13,7 @@ type ProdutoResponse = {
   cor?: string;
   material?: string;
   tamanho?: string;
+  precoVendaAtual?: number | null;
   quantidadeAtual?: number;
   atualizadoEm?: string;
   historico?: {
@@ -113,6 +114,10 @@ export default function EstoquePage() {
   const [carregandoCompra, setCarregandoCompra] = useState(false);
   const [detalheVenda, setDetalheVenda] = useState<VendaDetalhe | null>(null);
   const [carregandoVenda, setCarregandoVenda] = useState(false);
+  const [alertaOpen, setAlertaOpen] = useState(false);
+  const [alertaItens, setAlertaItens] = useState<ProdutoResponse[]>([]);
+  const [alertaCarregando, setAlertaCarregando] = useState(false);
+  const [alertaErro, setAlertaErro] = useState<string | null>(null);
 
   const PER_PAGE = 20;
 
@@ -197,7 +202,7 @@ export default function EstoquePage() {
   }, [produtos]);
 
   const enviarBaixa = async () => {
-    const qtd = Number(baixaQtd.replace(",", "."));
+    const qtd = Number(baixaQtdreplace(",", "."));
     if (!baixaProdutoId || !qtd || qtd <= 0) {
       setBaixaErro("Informe produto e quantidade maior que zero");
       return;
@@ -268,6 +273,19 @@ export default function EstoquePage() {
     }
   };
 
+  const carregarAlertas = async () => {
+    setAlertaCarregando(true);
+    setAlertaErro(null);
+    try {
+      const data = await apiFetch<ProdutoResponse[]>("/produtos/estoque/alerta");
+      setAlertaItens(data ?? []);
+    } catch (e) {
+      setAlertaErro(e instanceof Error ? e.message : "Erro ao carregar alerta de estoque");
+    } finally {
+      setAlertaCarregando(false);
+    }
+  };
+
   return (
     <ProtectedShell title="Estoque" subtitle="Acompanhe saldo dos itens e alertas de baixa.">
       {erro && (
@@ -289,6 +307,18 @@ export default function EstoquePage() {
               <p className="text-sm text-slate-400">
                 Busque por nome, código ou atributos. Ajuste alerta de quantidade mínima.
               </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAlertaOpen(true);
+                  void carregarAlertas();
+                }}
+                className="rounded-lg border border-amber-500 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:bg-amber-500/20"
+              >
+                Alerta de estoque
+              </button>
             </div>
           </div>
 
@@ -349,7 +379,8 @@ export default function EstoquePage() {
             </select>
           </div>
 
-          <div className="max-h-[520px] overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+          {/* Tabela para telas grandes */}
+          <div className="max-h-[520px] overflow-auto rounded-lg border border-slate-800 bg-slate-900/60 hidden lg:block">
             {carregando ? (
               <div className="p-4 text-sm text-slate-300">Carregando...</div>
             ) : filtrados.length === 0 ? (
@@ -364,7 +395,8 @@ export default function EstoquePage() {
                     <th className="px-4 py-2">Cor</th>
                     <th className="px-4 py-2">Material</th>
                     <th className="px-4 py-2">Tam.</th>
-                    <th className="px-4 py-2 text-right">Qtd.</th>
+                    <th className="px-4 py-2 text-right">Preço</th>
+                    <th className="px-4 py-2 text-right">Qtd</th>
                     <th className="px-4 py-2 text-right">Atualizado</th>
                     <th className="px-4 py-2 text-right">Ações</th>
                   </tr>
@@ -382,6 +414,7 @@ export default function EstoquePage() {
                         <td className="px-4 py-2">{p.cor ?? "-"}</td>
                         <td className="px-4 py-2">{p.material ?? "-"}</td>
                         <td className="px-4 py-2">{p.tamanho ?? "-"}</td>
+                        <td className="px-4 py-2 text-right">{p.precoVendaAtual != null ? formatCurrencyBRL(Number(p.precoVendaAtual)) : "-"}</td>
                         <td
                           className={`px-4 py-2 text-right font-semibold ${
                             alerta ? "text-amber-300" : "text-emerald-200"
@@ -394,28 +427,28 @@ export default function EstoquePage() {
                         </td>
                         <td className="px-4 py-2">
                           <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => abrirHistorico(p)}
-                            className="rounded-lg bg-slate-800 p-2 text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                            title="Ver histórico"
-                          >
-                            <History className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setBaixaProdutoId(p.id);
-                              setBaixaQtd("");
-                              setBaixaMotivo("");
-                              setBaixaErro(null);
-                              setBaixaModalOpen(true);
-                            }}
-                            className="rounded-lg bg-rose-500/90 p-2 text-slate-50 ring-1 ring-rose-400 transition hover:bg-rose-400"
-                            title="Registrar baixa"
-                          >
-                            <CircleMinus className="h-4 w-4" />
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => abrirHistorico(p)}
+                              className="rounded-lg bg-slate-800 p-2 text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                              title="Ver histórico"
+                            >
+                              <History className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setBaixaProdutoId(p.id);
+                                setBaixaQtd("");
+                                setBaixaMotivo("");
+                                setBaixaErro(null);
+                                setBaixaModalOpen(true);
+                              }}
+                              className="rounded-lg bg-rose-500/90 p-2 text-slate-50 ring-1 ring-rose-400 transition hover:bg-rose-400"
+                              title="Registrar baixa"
+                            >
+                              <CircleMinus className="h-4 w-4" />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -423,6 +456,77 @@ export default function EstoquePage() {
                   })}
                 </tbody>
               </table>
+            )}
+          </div>
+
+          {/* Cards para telas menores que 1000px */}
+          <div className="space-y-3 lg:hidden">
+            {carregando ? (
+              <div className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800">
+                Carregando...
+              </div>
+            ) : filtrados.length === 0 ? (
+              <div className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800">
+                Nenhum item encontrado.
+              </div>
+            ) : (
+              filtrados.map((p) => {
+                const qty = p.quantidadeAtual ?? 0;
+                const alerta = qty <= minAlerta;
+                return (
+                  <div
+                    key={p.id}
+                    className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-slate-50">{p.nome}</p>
+                        <p className="font-mono text-[11px] text-slate-400">{p.codigo}</p>
+                      </div>
+                      <div className="flex flex-col items-end">
+                        <span className="text-[11px] uppercase tracking-wide text-slate-400">Qtd</span>
+                        <span
+                          className={`text-2xl font-extrabold ${
+                            alerta ? "text-amber-200" : "text-emerald-200"
+                          }`}
+                        >
+                          {qty}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-300">
+                      <span>Tipo: {p.tipo ?? "-"}</span>
+                      <span>Cor: {p.cor ?? "-"}</span>
+                      <span>Material: {p.material ?? "-"}</span>
+                      <span>Tam.: {p.tamanho ?? "-"}</span>
+                      <span className="col-span-2">Preço: {p.precoVendaAtual != null ? formatCurrencyBRL(Number(p.precoVendaAtual)) : "-"}</span>
+                      <span className="col-span-2 text-slate-400">Atualizado: {p.atualizadoEm?.slice(0, 10) ?? "-"}</span>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => abrirHistorico(p)}
+                        className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                      >
+                        Histórico
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBaixaProdutoId(p.id);
+                          setBaixaQtd("");
+                          setBaixaMotivo("");
+                          setBaixaErro(null);
+                          setBaixaModalOpen(true);
+                        }}
+                        className="rounded-lg bg-rose-500/90 px-3 py-2 text-xs font-semibold text-white ring-1 ring-rose-400 transition hover:bg-rose-400"
+                      >
+                        Registrar baixa
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
           <div className="flex flex-col gap-2 pt-3 md:flex-row md:items-center md:justify-end">
@@ -827,6 +931,71 @@ export default function EstoquePage() {
               </div>
             ) : (
               <p className="mt-4 text-rose-200">Venda não encontrada.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {alertaOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 px-4">
+          <div className="w-full max-w-3xl rounded-2xl bg-slate-900 p-5 text-sm text-slate-200 ring-1 ring-amber-500/40 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-lg font-semibold text-slate-50">Alerta de estoque</p>
+                <p className="text-xs text-slate-400">Itens com quantidade no limite configurado.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAlertaOpen(false);
+                  setAlertaErro(null);
+                  setAlertaItens([]);
+                }}
+                className="rounded-full bg-slate-800 px-3 py-1 text-sm font-semibold text-slate-200 ring-1 ring-slate-700 transition hover:bg-slate-700"
+              >
+                Fechar
+              </button>
+            </div>
+            {alertaErro && (
+              <div className="mt-3 rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-200 ring-1 ring-rose-500/40">
+                {alertaErro}
+              </div>
+            )}
+            {alertaCarregando ? (
+              <p className="mt-3 text-slate-300">Carregando...</p>
+            ) : alertaItens.length === 0 ? (
+              <p className="mt-3 text-slate-300">Nenhum item em alerta.</p>
+            ) : (
+              <div className="mt-3 max-h-80 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
+                <table className="min-w-full text-sm text-slate-200">
+                  <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
+                    <tr>
+                      <th className="px-4 py-2">Código</th>
+                      <th className="px-4 py-2">Nome</th>
+                      <th className="px-4 py-2">Tipo</th>
+                      <th className="px-4 py-2">Cor</th>
+                      <th className="px-4 py-2">Material</th>
+                      <th className="px-4 py-2">Tam.</th>
+                      <th className="px-4 py-2 text-right">Qtd</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {alertaItens.map((p) => (
+                      <tr key={p.id} className="border-t border-slate-800">
+                        <td className="px-4 py-2 font-mono text-xs text-slate-300">{p.codigo}</td>
+                        <td className="px-4 py-2">{p.nome}</td>
+                        <td className="px-4 py-2">{p.tipo ?? "-"}</td>
+                        <td className="px-4 py-2">{p.cor ?? "-"}</td>
+                        <td className="px-4 py-2">{p.material ?? "-"}</td>
+                        <td className="px-4 py-2">{p.tamanho ?? "-"}</td>
+                        <td className="px-4 py-2 text-right font-semibold text-amber-300">
+                          {p.quantidadeAtual ?? 0}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
