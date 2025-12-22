@@ -1,8 +1,8 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ProtectedShell } from "@/components/protected-shell";
 import { apiFetch } from "@/lib/api-client";
+import { PageMeta } from "@/components/page-meta";
 
 type PaymentType = {
   id: string;
@@ -337,6 +337,36 @@ export default function PagamentosPage() {
     return { total, pago, pendente: total - pago };
   }, [pagamentosFiltrados]);
   const temPendencias = resumoPagamentos.pendente > 0;
+  const extratoRows = useMemo(
+    () =>
+      pagamentosFiltrados.map((p) => {
+        const isGasto = isExpenseRow(p);
+        const fornecedorNome = isGasto
+          ? gastosMap[(p as ExpensePayment).gasto?.id || ""]?.fornecedor?.nome ||
+            (p as ExpensePayment).gasto?.descricao ||
+            (p as ExpensePayment).gasto?.id ||
+            "-"
+          : (p as PurchasePayment).compra?.fornecedor?.nome ||
+            ((p as PurchasePayment).compra?.id
+              ? comprasMap[(p as PurchasePayment).compra!.id]?.fornecedor?.nome || "-"
+              : "-");
+        const gastoStatus = isGasto ? gastosMap[(p as ExpensePayment).gasto?.id || ""]?.status : undefined;
+        const statusParaCor = gastoStatus ?? p.statusPagamento ?? "";
+        return {
+          id: p.id,
+          isGasto,
+          fornecedorNome,
+          valorClass: statusValorClass(statusParaCor),
+          parcela: p.nParcela,
+          dataVencimento: p.dataVencimento ? p.dataVencimento.slice(0, 10) : "-",
+          valorParcela: Number(p.valorParcela || 0),
+          tipoPagamento: p.tipoPagamento?.descricao ?? "-",
+          compraId: !isGasto ? (p as PurchasePayment).compra?.id : undefined,
+          gastoId: isGasto ? (p as ExpensePayment).gasto?.id : undefined,
+        };
+      }),
+    [pagamentosFiltrados, gastosMap, comprasMap],
+  );
   const pagamentosDoCartaoModal = useMemo(
     () => (cardInfoModal ? pagamentos.filter((p) => getCardId(p) === cardInfoModal.id) : []),
     [cardInfoModal, pagamentos],
@@ -434,9 +464,10 @@ export default function PagamentosPage() {
   };
 
   return (
-    <ProtectedShell title="Cartões" subtitle="Cartoes, regras de link e tipos de pagamento">
+    <div>
+      <PageMeta title="Cartões" subtitle="Cartoes, regras de link e tipos de pagamento" />
       {message && (
-        <div className="mb-4 rounded-lg bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200 ring-1 ring-emerald-500/40">
+        <div className="mb-4 rounded-lg bg-emerald-700/40 px-4 py-2 text-sm text-emerald-50 font-semibold ring-1 ring-emerald-500 shadow shadow-emerald-500/60">
           {message}
         </div>
       )}
@@ -542,60 +573,108 @@ export default function PagamentosPage() {
           )}
 
           {showCards && (
-            <div className="mt-4 max-h-64 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60 text-sm text-slate-200">
+            <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 text-sm text-slate-200">
               {cards.length === 0 ? (
                 <div className="p-3 text-slate-400">Nenhum cartao/conta cadastrado.</div>
               ) : (
-                <table className="min-w-full">
-                  <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
-                    <tr>
-                      <th className="px-4 py-2">Nome</th>
-                      <th className="px-4 py-2">Banco</th>
-                      <th className="px-4 py-2">Bandeira</th>
-                      <th className="px-4 py-2">Fechamento/Venc.</th>
-                      <th className="px-4 py-2">PIX</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                <>
+                  <div className="hidden max-h-64 overflow-auto lg:block">
+                    <table className="min-w-full">
+                      <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
+                        <tr>
+                          <th className="px-4 py-2">Nome</th>
+                          <th className="px-4 py-2">Banco</th>
+                          <th className="px-4 py-2">Bandeira</th>
+                          <th className="px-4 py-2">Fechamento/Venc.</th>
+                          <th className="px-4 py-2">PIX</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cards.map((c) => (
+                          <tr key={c.id} className="border-t border-slate-800">
+                            <td className="px-4 py-2">{c.nome}</td>
+                            <td className="px-4 py-2">{c.banco ?? "-"}</td>
+                            <td className="px-4 py-2">{c.bandeira ?? "-"}</td>
+                            <td className="px-4 py-2">
+                              {c.diaFechamento ?? "-"} / {c.diaVencimento ?? "-"}
+                            </td>
+                            <td className="px-4 py-2">{c.pixChave ?? "-"}</td>
+                            <td className="px-4 py-2">
+                              <button
+                                className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                                onClick={() => {
+                                  setCardForm({
+                                    nome: c.nome,
+                                    banco: c.banco,
+                                    bandeira: c.bandeira,
+                                    diaFechamento: c.diaFechamento,
+                                    diaVencimento: c.diaVencimento,
+                                    pixChave: c.pixChave,
+                                    ativo: c.ativo,
+                                  });
+                                  setEditingCardId(c.id);
+                                  setShowCardForm(true);
+                                }}
+                              >
+                                Editar
+                              </button>
+                              <button
+                                className="ml-2 rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                                onClick={() => setCardInfoModal(c)}
+                              >
+                                Compras
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="space-y-3 p-3 lg:hidden">
                     {cards.map((c) => (
-                      <tr key={c.id} className="border-t border-slate-800">
-                        <td className="px-4 py-2">{c.nome}</td>
-                        <td className="px-4 py-2">{c.banco ?? "-"}</td>
-                        <td className="px-4 py-2">{c.bandeira ?? "-"}</td>
-                        <td className="px-4 py-2">
-                          {c.diaFechamento ?? "-"} / {c.diaVencimento ?? "-"}
-                        </td>
-                        <td className="px-4 py-2">{c.pixChave ?? "-"}</td>
-                        <td className="px-4 py-2">
+                      <div key={c.id} className="rounded-lg bg-slate-900/70 p-3 ring-1 ring-slate-800">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-50">{c.nome}</p>
+                            <p className="text-xs text-slate-400">
+                              {c.banco ?? "-"} {c.bandeira ? `• ${c.bandeira}` : ""}
+                            </p>
+                          </div>
+                          <span className="text-xs text-slate-400">
+                            {c.diaFechamento ?? "-"} / {c.diaVencimento ?? "-"}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs text-slate-300">PIX: {c.pixChave ?? "-"}</p>
+                        <div className="mt-3 flex flex-wrap justify-end gap-2">
                           <button
-                        className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                        onClick={() => {
-                          setCardForm({
-                            nome: c.nome,
-                            banco: c.banco,
-                            bandeira: c.bandeira,
-                            diaFechamento: c.diaFechamento,
-                            diaVencimento: c.diaVencimento,
-                            pixChave: c.pixChave,
-                            ativo: c.ativo,
-                          });
-                          setEditingCardId(c.id);
-                          setShowCardForm(true);
-                        }}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        className="ml-2 rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
-                        onClick={() => setCardInfoModal(c)}
-                      >
-                        Compras
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                            className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                            onClick={() => {
+                              setCardForm({
+                                nome: c.nome,
+                                banco: c.banco,
+                                bandeira: c.bandeira,
+                                diaFechamento: c.diaFechamento,
+                                diaVencimento: c.diaVencimento,
+                                pixChave: c.pixChave,
+                                ativo: c.ativo,
+                              });
+                              setEditingCardId(c.id);
+                              setShowCardForm(true);
+                            }}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700"
+                            onClick={() => setCardInfoModal(c)}
+                          >
+                            Compras
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -848,7 +927,8 @@ export default function PagamentosPage() {
               <div className="p-3 text-slate-400">Nenhuma parcela neste mês/cartão.</div>
             )}
             {selectedCardExtract && selectedMonth && pagamentosFiltrados.length > 0 && (
-                <table className="min-w-full">
+              <>
+                <table className="min-w-full hidden lg:table">
                   <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
                     <tr>
                       <th className="px-4 py-2">Parcela</th>
@@ -860,61 +940,77 @@ export default function PagamentosPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pagamentosFiltrados.map((p) => {
-                      const isGasto = isExpenseRow(p);
-                      const id = p.id;
-                      const fornecedorNome = isGasto
-                        ? gastosMap[(p as ExpensePayment).gasto?.id || ""]?.fornecedor?.nome ||
-                          (p as ExpensePayment).gasto?.descricao ||
-                          (p as ExpensePayment).gasto?.id ||
-                          "-"
-                        : (p as PurchasePayment).compra?.fornecedor?.nome ||
-                          (p as PurchasePayment).compra?.id
-                          ? comprasMap[(p as PurchasePayment).compra!.id]?.fornecedor?.nome || "-"
-                          : "-";
-                      const gastoStatus = isGasto ? gastosMap[(p as ExpensePayment).gasto?.id || ""]?.status : undefined;
-                      const statusParaCor = gastoStatus ?? p.statusPagamento ?? "";
-                      const valorClass = statusValorClass(statusParaCor);
-                      console.log("extrato: linha", {
-                        id,
-                        tipo: isGasto ? "gasto" : "compra",
-                        statusPagamento: p.statusPagamento,
-                        gastoStatus,
-                        statusUsado: statusParaCor,
-                        class: valorClass,
-                      });
-                      return (
-                        <tr key={id} className="border-t border-slate-800">
-                          <td className="px-4 py-2">{p.nParcela}</td>
-                          <td className="px-4 py-2">{p.dataVencimento ? p.dataVencimento.slice(0, 10) : "-"}</td>
-                          <td className="px-4 py-2">{fornecedorNome}</td>
-                          <td className={`px-4 py-2 font-semibold ${valorClass}`}>R$ {Number(p.valorParcela || 0).toFixed(2)}</td>
-                          <td className="px-4 py-2">{p.tipoPagamento?.descricao ?? "-"}</td>
-                          <td className="px-4 py-2 text-right">
-                            {isGasto ? (
-                              <button
-                                className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50"
-                                onClick={() => (p as ExpensePayment).gasto?.id && void abrirGastoInfo((p as ExpensePayment).gasto!.id)}
-                                disabled={!(p as ExpensePayment).gasto?.id}
-                              >
-                                Ver gasto
-                              </button>
-                            ) : (
-                              <button
-                                className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50"
-                                disabled={!(p as PurchasePayment).compra?.id}
-                                onClick={() => (p as PurchasePayment).compra?.id && void abrirCompraInfo((p as PurchasePayment).compra!.id)}
-                              >
-                                Ver compra
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {extratoRows.map((row) => (
+                      <tr key={row.id} className="border-t border-slate-800">
+                        <td className="px-4 py-2">{row.parcela}</td>
+                        <td className="px-4 py-2">{row.dataVencimento}</td>
+                        <td className="px-4 py-2">{row.fornecedorNome}</td>
+                        <td className={`px-4 py-2 font-semibold ${row.valorClass}`}>
+                          R$ {row.valorParcela.toFixed(2)}
+                        </td>
+                        <td className="px-4 py-2">{row.tipoPagamento}</td>
+                        <td className="px-4 py-2 text-right">
+                          {row.isGasto ? (
+                            <button
+                              className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50"
+                              onClick={() => row.gastoId && void abrirGastoInfo(row.gastoId)}
+                              disabled={!row.gastoId}
+                            >
+                              Ver gasto
+                            </button>
+                          ) : (
+                            <button
+                              className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50"
+                              disabled={!row.compraId}
+                              onClick={() => row.compraId && void abrirCompraInfo(row.compraId)}
+                            >
+                              Ver compra
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
-              )}
+                <div className="space-y-3 p-3 lg:hidden">
+                  {extratoRows.map((row) => (
+                    <div key={row.id} className="rounded-lg bg-slate-900/70 p-3 ring-1 ring-slate-800">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-50">{row.fornecedorNome}</p>
+                          <p className="text-xs text-slate-400">
+                            Parcela {row.parcela} · Venc. {row.dataVencimento}
+                          </p>
+                        </div>
+                        <span className={`text-sm font-semibold ${row.valorClass}`}>
+                          R$ {row.valorParcela.toFixed(2)}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-300">Tipo: {row.tipoPagamento}</p>
+                      <div className="mt-3 flex justify-end">
+                        {row.isGasto ? (
+                          <button
+                            className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50"
+                            onClick={() => row.gastoId && void abrirGastoInfo(row.gastoId)}
+                            disabled={!row.gastoId}
+                          >
+                            Ver gasto
+                          </button>
+                        ) : (
+                          <button
+                            className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-100 ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:opacity-50"
+                            disabled={!row.compraId}
+                            onClick={() => row.compraId && void abrirCompraInfo(row.compraId)}
+                          >
+                            Ver compra
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           {selectedCardExtract && selectedMonth && (
@@ -933,7 +1029,7 @@ export default function PagamentosPage() {
                   {salvandoFatura ? "Salvando..." : "Marcar mês como pago"}
                 </button>
               ) : (
-                <div className="rounded-lg bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-500/30">
+                <div className="rounded-lg bg-emerald-700/40 px-3 py-2 text-xs font-semibold text-emerald-50 font-semibold ring-1 ring-emerald-500 shadow-sm shadow-emerald-500/25">
                   Sem pendências neste mês.
                 </div>
               )}
@@ -1179,6 +1275,6 @@ export default function PagamentosPage() {
           </div>
         </div>
       )}
-    </ProtectedShell>
+    </div>
   );
 }

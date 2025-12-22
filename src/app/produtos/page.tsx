@@ -1,8 +1,17 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ProtectedShell } from "@/components/protected-shell";
 import { apiFetch } from "@/lib/api-client";
+import { PageMeta } from "@/components/page-meta";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationEllipsis,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 
 type Option = { id: string; nome: string; codigo?: string };
 type Product = {
@@ -21,8 +30,31 @@ type CategoryKey = "tipos" | "cores" | "materiais" | "tamanhos";
 type CatalogPayload = { nome: string; codigo: string };
 type FormField = { name: string; label: string; required?: boolean; maxLength?: number };
 
+type PaginationEntry = number | "ellipsis";
+
 const toUpper = (v: FormDataEntryValue | null) => v?.toString().toUpperCase() ?? "";
 const PER_PAGE = 20;
+
+const buildPaginationItems = (current: number, total: number): PaginationEntry[] => {
+  const safeTotal = Math.max(1, total);
+  if (safeTotal <= 5) {
+    return Array.from({ length: safeTotal }, (_, index) => index + 1);
+  }
+  const items: PaginationEntry[] = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(safeTotal - 1, current + 1);
+  if (start > 2) {
+    items.push("ellipsis");
+  }
+  for (let i = start; i <= end; i += 1) {
+    items.push(i);
+  }
+  if (end < safeTotal - 1) {
+    items.push("ellipsis");
+  }
+  items.push(safeTotal);
+  return items;
+};
 
 export default function ProdutosPage() {
   const [tipos, setTipos] = useState<Option[]>([]);
@@ -61,6 +93,7 @@ export default function ProdutosPage() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [totalPages, setTotalPages] = useState<number | null>(null);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const skipFirstFilterLoad = useRef(true);
 
@@ -142,8 +175,11 @@ export default function ProdutosPage() {
       const currentPage = !Array.isArray(data) && data?.page ? data.page : targetPage;
       setProducts(list);
       if (typeof total === "number") {
-        setHasMore(currentPage * perPage < total);
+        const pages = Math.max(1, Math.ceil(total / perPage));
+        setTotalPages(pages);
+        setHasMore(currentPage < pages);
       } else {
+        setTotalPages(null);
         setHasMore(list.length === perPage);
       }
       setPage(currentPage);
@@ -177,6 +213,23 @@ export default function ProdutosPage() {
     void loadProducts(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersProduct.search, filtersProduct.tipo, filtersProduct.cor, filtersProduct.material, filtersProduct.tamanho]);
+
+  const limparFiltros = () => {
+    setFiltersProduct({
+      search: "",
+      tipo: "",
+      cor: "",
+      material: "",
+      tamanho: "",
+    });
+    setPage(1);
+  };
+
+  const resolvedTotalPages = useMemo(() => totalPages ?? (hasMore ? page + 1 : page), [totalPages, hasMore, page]);
+  const paginationItems = useMemo(
+    () => buildPaginationItems(page, resolvedTotalPages),
+    [page, resolvedTotalPages],
+  );
 
   async function handleCreateCatalog(path: string, body: CatalogPayload) {
     if (path === "/produtos/tamanhos") {
@@ -294,9 +347,10 @@ export default function ProdutosPage() {
   }
 
   return (
-    <ProtectedShell title="Produtos" subtitle="Catálogo e Cadastro">
+    <div>
+      <PageMeta title="Produtos" subtitle="Catálogo e Cadastro" />
       {message && (
-        <div className="mb-4 rounded-lg bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200 ring-1 ring-emerald-500/40">
+        <div className="mb-4 rounded-lg bg-emerald-700/40 px-4 py-3 text-sm text-emerald-50 font-semibold ring-1 ring-emerald-500 shadow shadow-emerald-500/60">
           {message}
         </div>
       )}
@@ -308,10 +362,10 @@ export default function ProdutosPage() {
 
       <div className="rounded-xl bg-slate-900/70 p-6 ring-1 ring-slate-800">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
+        {/*<div>
             <h3 className="text-lg font-semibold text-slate-50">Produtos</h3>
             <p className="text-sm text-slate-400">Clique para ver detalhes e ações.</p>
-          </div>
+          </div>*/}
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => {
@@ -328,7 +382,7 @@ export default function ProdutosPage() {
               setError(null);
               setShowFormCatalog(true);
             }}
-              className="rounded-full border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-100 hover:border-cyan-400 transition"
+              className="rounded-full border border-slate-400/80 bg-slate-800/90 px-4 py-2 text-sm font-semibold text-slate-100 shadow-sm transition hover:border-cyan-300 hover:bg-slate-700 hover:text-cyan-100"
             >
               Gerenciar catálogos
             </button>
@@ -390,6 +444,15 @@ export default function ProdutosPage() {
               </option>
             ))}
           </select>
+          <div className="md:col-span-3 xl:col-span-6 flex justify-end">
+            <button
+              type="button"
+              onClick={limparFiltros}
+              className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-100 transition hover:border-cyan-400 hover:text-cyan-100"
+            >
+              Limpar filtros
+            </button>
+          </div>
         </div>
 
         {/* Lista responsiva: tabela em telas médias+ e cards no mobile */}
@@ -478,17 +541,25 @@ export default function ProdutosPage() {
             </div>
           ) : (
             products.map((p) => (
-              <button
+              <div
                 key={p.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => setSelectedProduct(p)}
-                className="w-full text-left rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800 transition hover:bg-slate-800"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " " ) {
+                    e.preventDefault();
+                    setSelectedProduct(p);
+                  }
+                }}
+                className="w-full text-left rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800 transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-400"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="font-semibold text-slate-50">{p.nome}</p>
                     <p className="text-xs text-slate-400">{p.codigo}</p>
                   </div>
-                  <span className="text-xs font-semibold text-emerald-200">
+                  <span className="text-xs font-semibold text-emerald-50 font-semibold">
                     {p.preco?.precoVendaAtual !== undefined ? `R$ ${p.preco.precoVendaAtual.toFixed(2)}` : "-"}
                   </span>
                 </div>
@@ -521,30 +592,42 @@ export default function ProdutosPage() {
                     Histórico
                   </button>
                 </div>
-              </button>
+              </div>
             ))
           )}
         </div>
 
-        <div className="mt-3 flex items-center justify-end gap-3 text-sm text-slate-200">
-          <button
-            type="button"
-            disabled={page === 1 || loadingProducts}
-            onClick={() => void loadProducts(Math.max(1, page - 1))}
-            className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-100 transition hover:border-cyan-400 disabled:opacity-50"
-          >
-            Anterior
-          </button>
-          <span className="text-xs text-slate-400">Página {page}</span>
-          <button
-            type="button"
-            disabled={!hasMore || loadingProducts}
-            onClick={() => void loadProducts(page + 1)}
-            className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-100 transition hover:border-cyan-400 disabled:opacity-50"
-          >
-            Próxima
-          </button>
-        </div>
+        <Pagination className="mt-3 justify-end">
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                disabled={page === 1 || loadingProducts}
+                onClick={() => void loadProducts(Math.max(1, page - 1))}
+              />
+            </PaginationItem>
+            {paginationItems.map((item, index) => (
+              <PaginationItem key={`${item}-${index}`}>
+                {item === "ellipsis" ? (
+                  <PaginationEllipsis />
+                ) : (
+                  <PaginationLink
+                    isActive={item === page}
+                    disabled={item === page || loadingProducts}
+                    onClick={() => void loadProducts(item)}
+                  >
+                    {item}
+                  </PaginationLink>
+                )}
+              </PaginationItem>
+            ))}
+            <PaginationItem>
+              <PaginationNext
+                disabled={page >= resolvedTotalPages || loadingProducts}
+                onClick={() => void loadProducts(page + 1)}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
       </div>
 
       {showFormProduct && (
@@ -720,7 +803,7 @@ export default function ProdutosPage() {
           </div>
         </ModalShell>
       )}
-    </ProtectedShell>
+    </div>
   );
 }
 
@@ -1025,7 +1108,7 @@ function CategoryManager({
                 const next = !prev;
                 if (next) {
                   setTimeout(() => {
-                    const firstInput = document.querySelector<HTMLInputElement>('form input[name=\"nome\"]');
+                    const firstInput = document.querySelector<HTMLInputElement>('form input[name="nome"]');
                     firstInput?.focus();
                   }, 0);
                 } else {
@@ -1143,7 +1226,7 @@ function ProductEditForm({
         />
       </div>
       <div className="space-y-2">
-        <label className="block text-xs text-slate-400">ObservaÇõÇœes</label>
+        <label className="block text-xs text-slate-400">Observações</label>
         <textarea
           value={observacao}
           onChange={(e) => setObservacao(e.target.value)}
@@ -1175,3 +1258,12 @@ function ProductEditForm({
     </form>
   );
 }
+
+
+
+
+
+
+
+
+

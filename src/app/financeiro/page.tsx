@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { ProtectedShell } from "@/components/protected-shell";
 import { apiFetch } from "@/lib/api-client";
+import { PageMeta } from "@/components/page-meta";
 
 export default function FinanceiroPage() {
   const [message, setMessage] = useState<string | null>(null);
@@ -11,9 +11,10 @@ export default function FinanceiroPage() {
   const [salvandoConta, setSalvandoConta] = useState(false);
 
   return (
-    <ProtectedShell title="Financeiro" subtitle="Fluxos de caixa e cartões">
+    <div>
+      <PageMeta title="Financeiro" subtitle="Fluxos de caixa e cartões" />
       {message && (
-        <div className="mb-4 rounded-lg bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200 ring-1 ring-emerald-500/40">
+        <div className="mb-4 rounded-lg bg-emerald-700/40 px-4 py-2 text-sm text-emerald-50 font-semibold ring-1 ring-emerald-500 shadow shadow-emerald-500/60">
           {message}
         </div>
       )}
@@ -210,6 +211,6 @@ export default function FinanceiroPage() {
           <p className="mt-4 text-sm text-slate-400">(Integre aqui a visão de fluxo)</p>
         </div>
       </div>
-    </ProtectedShell>
+    </div>
   );
 }

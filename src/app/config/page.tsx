@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ProtectedShell } from "@/components/protected-shell";
 import { apiFetch } from "@/lib/api-client";
+import { PageMeta } from "@/components/page-meta";
 
 type User = {
   id: string;
@@ -159,10 +159,11 @@ export default function ConfigPage() {
   };
 
   return (
-    <ProtectedShell title="Configurações" subtitle="Preferências e gestão de acesso">
+    <div>
+      <PageMeta title="Configurações" subtitle="Preferências e gestão de acesso" />
       <div className="space-y-6">
         {message && (
-          <div className="rounded-lg bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200 ring-1 ring-emerald-500/40">
+          <div className="rounded-lg bg-emerald-700/40 px-4 py-2 text-sm text-emerald-50 font-semibold ring-1 ring-emerald-500 shadow shadow-emerald-500/60">
             {message}
           </div>
         )}
@@ -549,6 +550,6 @@ export default function ConfigPage() {
           </div>
         </div>
       )}
-    </ProtectedShell>
+    </div>
   );
 }

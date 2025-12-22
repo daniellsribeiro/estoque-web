@@ -2,8 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { BadgeDollarSign, CircleMinus, History, ShoppingCart } from "lucide-react";
-import { ProtectedShell } from "@/components/protected-shell";
 import { apiFetch } from "@/lib/api-client";
+import { PageMeta } from "@/components/page-meta";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationEllipsis,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 
 type ProdutoResponse = {
   id: string;
@@ -83,6 +92,29 @@ type VendaDetalhe = {
   }[];
 };
 
+type PaginationEntry = number | "ellipsis";
+
+const buildPaginationItems = (current: number, total: number): PaginationEntry[] => {
+  const safeTotal = Math.max(1, total);
+  if (safeTotal <= 5) {
+    return Array.from({ length: safeTotal }, (_, index) => index + 1);
+  }
+  const items: PaginationEntry[] = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(safeTotal - 1, current + 1);
+  if (start > 2) {
+    items.push("ellipsis");
+  }
+  for (let i = start; i <= end; i += 1) {
+    items.push(i);
+  }
+  if (end < safeTotal - 1) {
+    items.push("ellipsis");
+  }
+  items.push(safeTotal);
+  return items;
+};
+
 const formatNumber = (n: number) =>
   new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 
@@ -93,6 +125,7 @@ export default function EstoquePage() {
   const [produtos, setProdutos] = useState<ProdutoResponse[]>([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [totalPages, setTotalPages] = useState<number | null>(null);
   const [busca, setBusca] = useState("");
   const [minAlerta, setMinAlerta] = useState(1);
   const [erro, setErro] = useState<string | null>(null);
@@ -141,8 +174,11 @@ export default function EstoquePage() {
       const currentPage = !Array.isArray(data) && data?.page ? data.page : targetPage;
       setProdutos(list ?? []);
       if (typeof total === "number") {
-        setHasMore(currentPage * perPage < total);
+        const pages = Math.max(1, Math.ceil(total / perPage));
+        setTotalPages(pages);
+        setHasMore(currentPage < pages);
       } else {
+        setTotalPages(null);
         setHasMore((list?.length ?? 0) === perPage);
       }
       setPage(currentPage);
@@ -176,6 +212,12 @@ export default function EstoquePage() {
     });
   }, [produtos, busca, filtroTipo, filtroCor, filtroMaterial, filtroTamanho]);
 
+  const resolvedTotalPages = useMemo(() => totalPages ?? (hasMore ? page + 1 : page), [totalPages, hasMore, page]);
+  const paginationItems = useMemo(
+    () => buildPaginationItems(page, resolvedTotalPages),
+    [page, resolvedTotalPages],
+  );
+
   const totalSkus = filtrados.length;
   const totalPecas = filtrados.reduce((acc, p) => acc + (p.quantidadeAtual ?? 0), 0);
   const baixos = filtrados.filter((p) => (p.quantidadeAtual ?? 0) <= minAlerta);
@@ -201,8 +243,17 @@ export default function EstoquePage() {
     return Array.from(set);
   }, [produtos]);
 
+  const limparFiltros = () => {
+    setBusca("");
+    setFiltroTipo("");
+    setFiltroCor("");
+    setFiltroMaterial("");
+    setFiltroTamanho("");
+    setPage(1);
+  };
+
   const enviarBaixa = async () => {
-    const qtd = Number(baixaQtdreplace(",", "."));
+    const qtd = Number(baixaQtd.replace(",", "."));
     if (!baixaProdutoId || !qtd || qtd <= 0) {
       setBaixaErro("Informe produto e quantidade maior que zero");
       return;
@@ -287,14 +338,15 @@ export default function EstoquePage() {
   };
 
   return (
-    <ProtectedShell title="Estoque" subtitle="Acompanhe saldo dos itens e alertas de baixa.">
+    <div>
+      <PageMeta title="Estoque" subtitle="Acompanhe saldo dos itens e alertas de baixa." />
       {erro && (
         <div className="mb-4 rounded-lg bg-rose-500/10 px-4 py-2 text-sm text-rose-200 ring-1 ring-rose-500/40">
           {erro}
         </div>
       )}
       {sucesso && (
-        <div className="mb-4 rounded-lg bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200 ring-1 ring-emerald-500/40">
+        <div className="mb-4 rounded-lg bg-emerald-700/40 px-4 py-2 text-sm text-emerald-50 font-semibold ring-1 ring-emerald-500 shadow shadow-emerald-500/60">
           {sucesso}
         </div>
       )}
@@ -302,12 +354,12 @@ export default function EstoquePage() {
       <div className="space-y-6">
         <div className="rounded-xl bg-slate-900/70 p-4 ring-1 ring-slate-800 space-y-3">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
+            {/*<div>
               <h3 className="text-lg font-semibold text-slate-50">Lista de estoque</h3>
               <p className="text-sm text-slate-400">
                 Busque por nome, código ou atributos. Ajuste alerta de quantidade mínima.
               </p>
-            </div>
+            </div>*/}
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -377,6 +429,15 @@ export default function EstoquePage() {
                 </option>
               ))}
             </select>
+            <div className="flex justify-end md:col-span-4">
+              <button
+                type="button"
+                onClick={limparFiltros}
+                className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-100 transition hover:border-cyan-400 hover:text-cyan-100"
+              >
+                Limpar filtros
+              </button>
+            </div>
           </div>
 
           {/* Tabela para telas grandes */}
@@ -417,7 +478,7 @@ export default function EstoquePage() {
                         <td className="px-4 py-2 text-right">{p.precoVendaAtual != null ? formatCurrencyBRL(Number(p.precoVendaAtual)) : "-"}</td>
                         <td
                           className={`px-4 py-2 text-right font-semibold ${
-                            alerta ? "text-amber-300" : "text-emerald-200"
+                            alerta ? "text-amber-300" : "text-emerald-50 font-semibold"
                           }`}
                         >
                           {qty}
@@ -487,7 +548,7 @@ export default function EstoquePage() {
                         <span className="text-[11px] uppercase tracking-wide text-slate-400">Qtd</span>
                         <span
                           className={`text-2xl font-extrabold ${
-                            alerta ? "text-amber-200" : "text-emerald-200"
+                            alerta ? "text-amber-200" : "text-emerald-50 font-semibold"
                           }`}
                         >
                           {qty}
@@ -529,26 +590,38 @@ export default function EstoquePage() {
               })
             )}
           </div>
-          <div className="flex flex-col gap-2 pt-3 md:flex-row md:items-center md:justify-end">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                disabled={page === 1 || carregando}
-                onClick={() => void carregar(Math.max(1, page - 1))}
-                className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-100 transition hover:border-cyan-400 disabled:opacity-50"
-              >
-                Anterior
-              </button>
-              <span className="text-xs text-slate-400">Página {page}</span>
-              <button
-                type="button"
-                disabled={!hasMore || carregando}
-                onClick={() => void carregar(page + 1)}
-                className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-100 transition hover:border-cyan-400 disabled:opacity-50"
-              >
-                Próxima
-              </button>
-            </div>
+          <div className="pt-3">
+            <Pagination className="justify-end">
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious
+                    disabled={page === 1 || carregando}
+                    onClick={() => void carregar(Math.max(1, page - 1))}
+                  />
+                </PaginationItem>
+                {paginationItems.map((item, index) => (
+                  <PaginationItem key={`${item}-${index}`}>
+                    {item === "ellipsis" ? (
+                      <PaginationEllipsis />
+                    ) : (
+                      <PaginationLink
+                        isActive={item === page}
+                        disabled={item === page || carregando}
+                        onClick={() => void carregar(item)}
+                      >
+                        {item}
+                      </PaginationLink>
+                    )}
+                  </PaginationItem>
+                ))}
+                <PaginationItem>
+                  <PaginationNext
+                    disabled={page >= resolvedTotalPages || carregando}
+                    onClick={() => void carregar(page + 1)}
+                  />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
           </div>
           {historicoProduto && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 px-4">
@@ -594,7 +667,7 @@ export default function EstoquePage() {
                           De {mov.quantidadeAnterior} para {mov.quantidadeNova}
                         </p>
                         <div className="mt-1 flex gap-4 text-sm font-semibold">
-                          <span className="text-emerald-200">+{mov.quantidadeAdicionada}</span>
+                          <span className="text-emerald-50 font-semibold">+{mov.quantidadeAdicionada}</span>
                           <span className="text-rose-200">-{mov.quantidadeSubtraida}</span>
                         </div>
                         {(mov.compraId || mov.vendaId) && (
@@ -1000,6 +1073,6 @@ export default function EstoquePage() {
           </div>
         </div>
       )}
-    </ProtectedShell>
+    </div>
   );
 }

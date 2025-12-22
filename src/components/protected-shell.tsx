@@ -1,8 +1,40 @@
-"use client";
+﻿"use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import {
+  Boxes,
+  CreditCard,
+  LayoutDashboard,
+  LogOut,
+  Package,
+  Receipt,
+  Settings,
+  ShoppingBag,
+  ShoppingCart,
+  Truck,
+  Users,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { apiFetch } from "@/lib/api-client";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 
 type Props = {
   title: string;
@@ -10,12 +42,13 @@ type Props = {
   children: React.ReactNode;
 };
 
+type MenuItem = { label: string; href: string; icon: LucideIcon };
+
 export function ProtectedShell({ title, subtitle, children }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const [userName, setUserName] = useState<string | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     let canceled = false;
@@ -41,18 +74,18 @@ export function ProtectedShell({ title, subtitle, children }: Props) {
     return () => window.removeEventListener("api-unauthorized", handleUnauthorized);
   }, [router]);
 
-  const menu = useMemo(
+  const menu = useMemo<MenuItem[]>(
     () => [
-      { label: "Dashboard", href: "/painel", icon: "🏠" },
-      { label: "Produtos", href: "/produtos", icon: "📦" },
-      { label: "Estoque", href: "/estoque", icon: "📊" },
-      { label: "Compras", href: "/compras", icon: "🛒" },
-      { label: "Gastos", href: "/gastos", icon: "💸" },
-      { label: "Vendas", href: "/vendas", icon: "🧾" },
-      { label: "Clientes", href: "/clientes", icon: "👥" },
-      { label: "Fornecedores", href: "/fornecedores", icon: "🏭" },
-      { label: "Cartões", href: "/pagamentos", icon: "💳" },
-      { label: "Configurações", href: "/config", icon: "⚙️" },
+      { label: "Dashboard", href: "/painel", icon: LayoutDashboard },
+      { label: "Produtos", href: "/produtos", icon: Package },
+      { label: "Estoque", href: "/estoque", icon: Boxes },
+      { label: "Compras", href: "/compras", icon: ShoppingCart },
+      { label: "Gastos", href: "/gastos", icon: Receipt },
+      { label: "Vendas", href: "/vendas", icon: ShoppingBag },
+      { label: "Clientes", href: "/clientes", icon: Users },
+      { label: "Fornecedores", href: "/fornecedores", icon: Truck },
+      { label: "Cart\u00f5es", href: "/pagamentos", icon: CreditCard },
+      { label: "Configura\u00e7\u00f5es", href: "/config", icon: Settings },
     ],
     [],
   );
@@ -70,93 +103,90 @@ export function ProtectedShell({ title, subtitle, children }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50">
-      <div className="flex min-h-screen">
-        <aside
-          className={`hidden h-screen flex-col border-r border-fuchsia-700/60 bg-slate-900 shadow-2xl transition-all duration-200 lg:flex ${
-            sidebarOpen ? "w-56" : "w-16"
-          }`}
-        >
-          <div className="flex items-center justify-between px-3 py-4">
-            <button
-              onClick={() => setSidebarOpen((p) => !p)}
-              className="rounded-md p-2 text-fuchsia-400 transition hover:bg-fuchsia-600/10"
-              aria-label="Alternar menu"
-            >
-              ☰
-            </button>
-            {sidebarOpen && (
-              <span className="text-xs font-semibold uppercase tracking-wide text-fuchsia-200">
-                {subtitle ?? "Painel"}
-              </span>
-            )}
+    <SidebarProvider>
+      <Sidebar collapsible="icon">
+        <SidebarHeader>
+          <div
+            className="
+              flex items-center gap-2 px-2 pr-12
+              group-data-[state=collapsed]/sidebar:px-0
+              group-data-[state=collapsed]/sidebar:pr-0
+              group-data-[state=collapsed]/sidebar:justify-center
+            "
+          >
+            {/* Logo completo quando expandido */}
+            <Image
+              src="/images/logo-heluzza.png"
+              alt="Heluzza Acessorios"
+              width={160}
+              height={48}
+              className="h-10 w-auto object-contain group-data-[state=collapsed]/sidebar:hidden"
+              priority
+            />
+            {/* Versão enxuta quando colapsado */}
+            <Image
+              src="/images/h-transparente.png"
+              alt="Heluzza Acessorios"
+              width={48}
+              height={48}
+              className="hidden h-8 w-8 object-contain group-data-[state=collapsed]/sidebar:block"
+              priority
+            />
           </div>
-          <nav className="flex-1 space-y-1 px-2">
-            {menu.map((item) => {
-              const active = pathname?.startsWith(item.href);
-              return (
-                <a
-                  key={item.href}
-                  href={item.href}
-                  className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                    active
-                      ? "bg-fuchsia-600 text-slate-50 shadow-lg"
-                      : "text-slate-200 hover:bg-slate-800 hover:text-white"
-                  }`}
-                  title={item.label}
-                >
-                  <span className="text-lg">{item.icon}</span>
-                  {sidebarOpen && <span className="flex-1 truncate">{item.label}</span>}
-                </a>
-              );
-            })}
-          </nav>
-          <div className="px-2 pb-4">
-            {sidebarOpen && userName && <p className="mb-2 truncate text-xs text-slate-400">Olá, {userName}</p>}
-            <button
-              onClick={handleLogout}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border border-fuchsia-700 px-3 py-2 text-sm font-semibold text-fuchsia-200 transition hover:bg-fuchsia-700/20"
-            >
-              ⏻ {sidebarOpen && "Sair"}
-            </button>
+        </SidebarHeader>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupLabel>Navegacao</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {menu.map((item) => {
+                  const active = pathname?.startsWith(item.href);
+                  const Icon = item.icon;
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton asChild isActive={active}>
+                        <Link href={item.href} title={item.label} aria-current={active ? "page" : undefined}>
+                          <Icon className="h-4 w-4" aria-hidden="true" />
+                          <span>{item.label}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+        <SidebarFooter>
+          {userName && (
+            <div className="px-2 pb-1 text-xs text-sidebar-foreground/70 group-data-[state=collapsed]/sidebar:hidden">
+              Ola, {userName}
+            </div>
+          )}
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton onClick={handleLogout}>
+                <LogOut className="h-4 w-4" aria-hidden="true" />
+                <span>Sair</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+        <SidebarRail />
+      </Sidebar>
+      <SidebarInset>
+        <header className="sticky top-0 z-10 flex h-14 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur">
+          <SidebarTrigger className="-ml-1" />
+          <div className="flex-1">
+            <h1 className="text-lg font-semibold text-foreground">{title}</h1>
           </div>
-        </aside>
-
-        <div className="flex-1">
-          <header className="sticky top-0 z-10 border-b border-slate-900/60 bg-slate-900/70 px-5 py-4 backdrop-blur lg:hidden">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-slate-400">{subtitle ?? "Painel da Loja"}</p>
-                <h1 className="text-lg font-semibold text-slate-50">{title}</h1>
-              </div>
-              <button
-                onClick={handleLogout}
-                className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 ring-1 ring-slate-700 transition hover:bg-slate-700"
-              >
-                Sair
-              </button>
-            </div>
-            <div className="mt-3 flex gap-2 overflow-x-auto text-xs text-slate-300">
-              {menu.map((item) => {
-                const active = pathname?.startsWith(item.href);
-                return (
-                  <a
-                    key={item.href}
-                    href={item.href}
-                    className={`whitespace-nowrap rounded-md px-3 py-2 transition ${
-                      active ? "bg-fuchsia-600 text-slate-50" : "bg-slate-900/60 text-slate-200"
-                    }`}
-                  >
-                    {item.label}
-                  </a>
-                );
-              })}
-            </div>
-          </header>
-
-          <main className="px-5 py-6 lg:px-8">{children}</main>
-        </div>
-      </div>
-    </div>
+        </header>
+        <main className="flex-1 px-4 py-5 lg:px-8">{children}</main>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
+
+
+
+

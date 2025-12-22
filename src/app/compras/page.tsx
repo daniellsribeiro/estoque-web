@@ -3,6 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ProtectedShell } from "@/components/protected-shell";
 import { apiFetch } from "@/lib/api-client";
+import { PageMeta } from "@/components/page-meta";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 
 type Supplier = { id: string; nome: string; principal?: boolean };
 type PaymentType = { id: string; descricao: string; parcelavel?: boolean; minParcelas?: number; maxParcelas?: number };
@@ -40,6 +50,25 @@ type PurchasePayment = {
   valorParcela: number;
   statusPagamento: string;
   cartaoConta?: { id: string; nome?: string | null; bandeira?: string | null; banco?: string | null; pixChave?: string | null };
+};
+
+type PaginationEntry = number | "ellipsis";
+
+const buildPaginationItems = (current: number, total: number): PaginationEntry[] => {
+  const safeTotal = Math.max(1, total);
+  if (safeTotal <= 5) {
+    return Array.from({ length: safeTotal }, (_, index) => index + 1);
+  }
+  const items: PaginationEntry[] = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(safeTotal - 1, current + 1);
+  if (start > 2) items.push("ellipsis");
+  for (let i = start; i <= end; i += 1) {
+    items.push(i);
+  }
+  if (end < safeTotal - 1) items.push("ellipsis");
+  items.push(safeTotal);
+  return items;
 };
 
 const formatCurrency = (value: string) => {
@@ -124,6 +153,8 @@ export default function ComprasPage() {
     tipoPagamentoId: filtroTipoPagamentoId,
     status: filtroStatus,
   };
+  const [page, setPage] = useState(1);
+  const PER_PAGE = 20;
 
   const [form, setForm] = useState(makeInitialForm());
 
@@ -137,6 +168,7 @@ export default function ComprasPage() {
     setItens([{ produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
     setMostrarNovaCompra(false);
     setError(null);
+    setMessage(null);
   };
 
   const totalCompra = useMemo(() => parseCurrency(form.total), [form.total]);
@@ -190,7 +222,7 @@ export default function ComprasPage() {
     return suppliers.filter((f) => f.nome.toLowerCase().includes(term));
   }, [fornecedorBusca, suppliers]);
 
-  const buildComprasQuery = (override?: Partial<typeof filterState>) => {
+  const buildComprasParams = (override?: Partial<typeof filterState>) => {
     const filters = { ...filterState, ...override };
     const params = new URLSearchParams();
     if (filters.dataInicio) params.append("dataInicio", filters.dataInicio);
@@ -198,8 +230,7 @@ export default function ComprasPage() {
     if (filters.fornecedorId) params.append("fornecedorId", filters.fornecedorId);
     if (filters.tipoPagamentoId) params.append("tipoPagamentoId", filters.tipoPagamentoId);
     if (filters.status) params.append("status", filters.status);
-    const query = params.toString();
-    return query ? `?${query}` : "";
+    return params;
   };
 
   const unwrapProducts = (data: Product[] | { items?: Product[] } | null | undefined) => {
@@ -224,9 +255,11 @@ export default function ComprasPage() {
   const loadCompras = async (override?: Partial<typeof filterState>) => {
     try {
       setLoading(true);
-      const query = buildComprasQuery(override);
-      const comp = await apiFetch<Purchase[]>(`/compras${query}`);
+      const params = buildComprasParams(override);
+      const query = params.toString();
+      const comp = await apiFetch<Purchase[]>(`/compras${query ? `?${query}` : ""}`);
       setCompras(comp || []);
+      setPage(1);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar dados");
@@ -240,6 +273,7 @@ export default function ComprasPage() {
       await loadBases();
       await loadCompras();
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -248,6 +282,7 @@ export default function ComprasPage() {
       return;
     }
     void loadCompras();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtroDataInicio, filtroDataFim, filtroFornecedorId, filtroTipoPagamentoId, filtroStatus]);
 
   useEffect(() => {
@@ -349,7 +384,7 @@ export default function ComprasPage() {
       setSalvandoCompra(true);
       setError(null);
       await apiFetch("/compras", { method: "POST", body: JSON.stringify(body) });
-      setMessage("Compra registrada");
+      setMessage(null);
       setItens([{ produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
       setForm((p) => ({ ...p, total: "0,00", observacoes: "" }));
       await loadCompras();
@@ -378,6 +413,15 @@ export default function ComprasPage() {
   };
 
   const comprasFiltradas = useMemo(() => compras, [compras]);
+  const resolvedTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(comprasFiltradas.length / PER_PAGE)),
+    [comprasFiltradas.length],
+  );
+  const paginationItems = useMemo(() => buildPaginationItems(page, resolvedTotalPages), [page, resolvedTotalPages]);
+  const paginatedCompras = useMemo(
+    () => comprasFiltradas.slice((page - 1) * PER_PAGE, page * PER_PAGE),
+    [comprasFiltradas, page],
+  );
 
   const abrirDetalheCompra = async (id: string) => {
     setDetalheCarregando(true);
@@ -409,10 +453,17 @@ export default function ComprasPage() {
     }
   };
 
+  useEffect(() => {
+    if (!mostrarNovaCompra) {
+      setMessage(null);
+    }
+  }, [mostrarNovaCompra]);
+
   return (
-    <ProtectedShell title="Compras" subtitle="Pedidos e pagamentos">
-      {message && (
-        <div className="mb-4 rounded-lg bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200 ring-1 ring-emerald-500/40">
+    <div>
+      <PageMeta title="Compras" subtitle="Pedidos e pagamentos" />
+      {message && !mostrarNovaCompra && message !== "Fornecedor cadastrado com sucesso." && (
+        <div className="mb-4 rounded-lg bg-emerald-700/40 px-4 py-2 text-sm text-emerald-50 font-semibold ring-1 ring-emerald-500 shadow shadow-emerald-500/60">
           {message}
         </div>
       )}
@@ -424,20 +475,26 @@ export default function ComprasPage() {
 
       <div className="space-y-6">
         {mostrarNovaCompra && (
-          <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-50">Nova compra</h3>
-                <p className="text-sm text-slate-400">Itens, parcelas e fornecedor.</p>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4">
+            <div className="w-full max-w-5xl max-h-[85vh] overflow-y-auto rounded-xl bg-slate-900 p-6 text-sm text-slate-200 ring-1 ring-slate-800">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-50">Nova compra</h3>
+                  <p className="text-sm text-slate-400">Itens, parcelas e fornecedor.</p>
+                </div>
+                <div className="space-y-1 text-right">
+                  <span className="block text-sm text-slate-300">Total: R$ {totalCompra.toFixed(2)}</span>
+                  {totalCompraZerado && (
+                    <span className="text-xs text-amber-300">Valor total zerado — confirme se está correto.</span>
+                  )}
+                </div>
               </div>
-              <div className="text-right">
-                <span className="text-sm text-slate-300 block">Total: R$ {totalCompra.toFixed(2)}</span>
-                {totalCompraZerado && (
-                  <span className="text-xs text-amber-300">Valor total zerado — confirme se está correto.</span>
-                )}
-              </div>
-            </div>
-            <div className="mt-3 space-y-3 text-sm">
+              {message && (
+                <div className="mt-3 rounded-lg bg-emerald-700/40 px-4 py-2 text-sm font-semibold text-emerald-50 ring-1 ring-emerald-500 shadow shadow-emerald-500/60">
+                  {message}
+                </div>
+              )}
+              <div className="mt-3 space-y-3 text-sm">
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="space-y-1">
                   <span className="text-xs text-slate-400">Data</span>
@@ -711,22 +768,22 @@ export default function ComprasPage() {
               </button>
             </div>
           </div>
-
+        </div>
         )}
 
         <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-50">Compras</h3>
-              <p className="text-sm text-slate-400">Selecione para ver parcelas.</p>
-            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-50">Compras</h3>
+                <p className="text-sm text-slate-400">Selecione para ver parcelas.</p>
+              </div>
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setMostrarNovaCompra((v) => !v)}
+                onClick={() => setMostrarNovaCompra(true)}
                 className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-500"
               >
-                {mostrarNovaCompra ? "Fechar nova compra" : "Adicionar nova compra"}
+                Adicionar nova compra
               </button>
               <button
                 type="button"
@@ -738,70 +795,73 @@ export default function ComprasPage() {
             </div>
           </div>
 
-            <div className="mt-3 grid gap-3 md:grid-cols-5 text-sm">
-              <label className="space-y-1">
-                <span className="text-xs text-slate-400">Data inicial</span>
-                <input
-                  type="date"
-                  value={filtroDataInicio}
-                  onChange={(e) => setFiltroDataInicio(e.target.value)}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs text-slate-400">Data final</span>
-                <input
-                  type="date"
-                  value={filtroDataFim}
-                  onChange={(e) => setFiltroDataFim(e.target.value)}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs text-slate-400">Fornecedor principal</span>
-                <select
-                  value={filtroFornecedorId}
-                  onChange={(e) => setFiltroFornecedorId(e.target.value)}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                >
-                  <option value="">Todos</option>
-                  {suppliers.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.nome}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs text-slate-400">Tipo de pagamento</span>
-                <select
-                  value={filtroTipoPagamentoId}
-                  onChange={(e) => setFiltroTipoPagamentoId(e.target.value)}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                >
-                  <option value="">Todos</option>
-                  {types.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.descricao}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs text-slate-400">Status</span>
-                <select
-                  value={filtroStatus}
-                  onChange={(e) => setFiltroStatus(e.target.value)}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                >
-                  <option value="">Todos</option>
-                  {statusOpcoes.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <div className="mt-4 rounded-lg bg-slate-800/60 p-4 ring-1 ring-slate-700/60">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-300">Filtros</p>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 text-sm">
+                <label className="space-y-1">
+                  <span className="text-xs text-slate-400">Data inicial</span>
+                  <input
+                    type="date"
+                    value={filtroDataInicio}
+                    onChange={(e) => setFiltroDataInicio(e.target.value)}
+                    className="h-11 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 text-slate-50 outline-none focus:border-cyan-400"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-slate-400">Data final</span>
+                  <input
+                    type="date"
+                    value={filtroDataFim}
+                    onChange={(e) => setFiltroDataFim(e.target.value)}
+                    className="h-11 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 text-slate-50 outline-none focus:border-cyan-400"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-slate-400">Fornecedor principal</span>
+                  <select
+                    value={filtroFornecedorId}
+                    onChange={(e) => setFiltroFornecedorId(e.target.value)}
+                    className="h-11 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 text-slate-50 outline-none focus:border-cyan-400"
+                  >
+                    <option value="">Todos</option>
+                    {suppliers.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.nome}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-slate-400">Tipo de pagamento</span>
+                  <select
+                    value={filtroTipoPagamentoId}
+                    onChange={(e) => setFiltroTipoPagamentoId(e.target.value)}
+                    className="h-11 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 text-slate-50 outline-none focus:border-cyan-400"
+                  >
+                    <option value="">Todos</option>
+                    {types.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.descricao}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs text-slate-400">Status</span>
+                  <select
+                    value={filtroStatus}
+                    onChange={(e) => setFiltroStatus(e.target.value)}
+                    className="h-11 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 text-slate-50 outline-none focus:border-cyan-400"
+                  >
+                    <option value="">Todos</option>
+                    {statusOpcoes.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
             </div>
 
             <div className="mt-3 space-y-3 lg:hidden">
@@ -809,12 +869,12 @@ export default function ComprasPage() {
                 <div className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-300 ring-1 ring-slate-800">
                   Carregando...
                 </div>
-              ) : comprasFiltradas.length === 0 ? (
+              ) : paginatedCompras.length === 0 ? (
                 <div className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-300 ring-1 ring-slate-800">
                   Nenhuma compra.
                 </div>
               ) : (
-                comprasFiltradas.map((c) => (
+                paginatedCompras.map((c) => (
                   <div
                     key={c.id}
                     className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800"
@@ -853,7 +913,7 @@ export default function ComprasPage() {
             <div className="mt-3 max-h-80 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60 hidden lg:block">
               {loading ? (
                 <div className="p-3 text-sm text-slate-400">Carregando...</div>
-              ) : comprasFiltradas.length === 0 ? (
+              ) : paginatedCompras.length === 0 ? (
                 <div className="p-3 text-sm text-slate-400">Nenhuma compra.</div>
               ) : (
                 <table className="min-w-full text-sm text-slate-200">
@@ -868,7 +928,7 @@ export default function ComprasPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {comprasFiltradas.map((c) => (
+                    {paginatedCompras.map((c) => (
                       <tr key={c.id} className="border-t border-slate-800">
                         <td className="px-4 py-2">{c.data.slice(0, 10) || ""}</td>
                         <td className="px-4 py-2">{c.fornecedor.nome || "-"}</td>
@@ -899,6 +959,36 @@ export default function ComprasPage() {
             </div>
           </div>
         </div>
+
+        {resolvedTotalPages > 1 && (
+          <Pagination className="justify-end">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  disabled={page === 1 || loading}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                />
+              </PaginationItem>
+              {paginationItems.map((item, index) => (
+                <PaginationItem key={`${item}-${index}`}>
+                  {item === "ellipsis" ? (
+                    <PaginationEllipsis />
+                  ) : (
+                    <PaginationLink
+                      isActive={item === page}
+                      onClick={() => setPage(Number(item))}
+                    >
+                      {item}
+                    </PaginationLink>
+                  )}
+                </PaginationItem>
+              ))}
+              <PaginationItem>
+                <PaginationNext disabled={page >= resolvedTotalPages || loading} onClick={() => setPage((p) => p + 1)} />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        )}
 
       {(detalheCompra || detalheCarregando) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4">
@@ -1185,6 +1275,6 @@ export default function ComprasPage() {
         </div>
       )}
 
-    </ProtectedShell>
+    </div>
   );
 }

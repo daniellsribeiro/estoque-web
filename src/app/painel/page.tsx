@@ -1,8 +1,8 @@
- "use client";
+﻿ "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ProtectedShell } from "@/components/protected-shell";
 import { apiFetch } from "@/lib/api-client";
+import { PageMeta } from "@/components/page-meta";
 
 type DashboardData = {
   estoqueCritico: number;
@@ -42,6 +42,7 @@ export default function PainelPage() {
           movimentacao: data.movimentacao ?? [],
         });
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         setDashboard(fallbackData);
         console.error(err);
       } finally {
@@ -65,7 +66,7 @@ export default function PainelPage() {
         title: "Vendas hoje",
         value: loading ? "..." : `R$ ${dashboard.vendasHoje.toLocaleString("pt-BR")}`,
         trend: loading ? "" : "vs. ontem",
-        accent: "bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-500/40",
+        accent: "bg-emerald-500/15 text-emerald-50 font-semibold ring-1 ring-emerald-500 shadow shadow-emerald-500/60",
       },
       {
         title: "Compras pendentes",
@@ -84,7 +85,8 @@ export default function PainelPage() {
   );
 
   return (
-    <ProtectedShell title="Dashboard" subtitle="Painel da Loja">
+    <div>
+      <PageMeta title="Dashboard" subtitle="Painel da Loja" />
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
         {cards.map((card) => (
           <div
@@ -107,7 +109,7 @@ export default function PainelPage() {
               <h3 className="text-lg font-semibold text-slate-50">Movimento semanal</h3>
               <p className="text-sm text-slate-400">Entradas x saídas</p>
             </div>
-            <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-200 ring-1 ring-emerald-500/40">
+            <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-50 font-semibold ring-1 ring-emerald-500 shadow shadow-emerald-500/60">
               {loading ? "Carregando" : "Atualizado"}
             </span>
           </div>
@@ -141,6 +143,7 @@ export default function PainelPage() {
           </ul>
         </div>
       </div>
-    </ProtectedShell>
+    </div>
   );
 }
+

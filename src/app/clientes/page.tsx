@@ -1,8 +1,17 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ProtectedShell } from "@/components/protected-shell";
 import { apiFetch } from "@/lib/api-client";
+import { PageMeta } from "@/components/page-meta";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationEllipsis,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 
 type Cliente = {
   id: string;
@@ -20,6 +29,29 @@ type Sale = {
   tipoPagamento?: { descricao: string };
 };
 
+type PaginationEntry = number | "ellipsis";
+
+const buildPaginationItems = (current: number, total: number): PaginationEntry[] => {
+  const safeTotal = Math.max(1, total);
+  if (safeTotal <= 5) {
+    return Array.from({ length: safeTotal }, (_, index) => index + 1);
+  }
+  const items: PaginationEntry[] = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(safeTotal - 1, current + 1);
+  if (start > 2) {
+    items.push("ellipsis");
+  }
+  for (let i = start; i <= end; i += 1) {
+    items.push(i);
+  }
+  if (end < safeTotal - 1) {
+    items.push("ellipsis");
+  }
+  items.push(safeTotal);
+  return items;
+};
+
 export default function ClientesPage() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,7 +59,6 @@ export default function ClientesPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [salvandoCliente, setSalvandoCliente] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [showLista, setShowLista] = useState(false);
   const [telefoneInput, setTelefoneInput] = useState("");
   const [emailInput, setEmailInput] = useState("");
   const [filtroNome, setFiltroNome] = useState("");
@@ -53,7 +84,6 @@ export default function ClientesPage() {
       setHasMore(list.length === PER_PAGE);
       setError(null);
       setPage(targetPage);
-      if (showLista === false) setShowLista(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao carregar clientes");
     } finally {
@@ -111,7 +141,6 @@ export default function ClientesPage() {
       setEmailInput("");
       await loadClientes(1);
       setShowForm(false);
-      setShowLista(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar cliente");
       setMessage(null);
@@ -136,11 +165,17 @@ export default function ClientesPage() {
   };
 
   const canLoadMore = useMemo(() => hasMore && !loading, [hasMore, loading]);
+  const resolvedTotalPages = useMemo(() => (hasMore ? page + 1 : page), [hasMore, page]);
+  const paginationItems = useMemo(
+    () => buildPaginationItems(page, resolvedTotalPages),
+    [page, resolvedTotalPages],
+  );
 
   return (
-    <ProtectedShell title="Clientes" subtitle="Relacionamento e contatos">
+    <div>
+      <PageMeta title="Clientes" subtitle="Relacionamento e contatos" />
       {message && (
-        <div className="mb-4 rounded-lg bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200 ring-1 ring-emerald-500/40">
+        <div className="mb-4 rounded-lg bg-emerald-700/40 px-4 py-2 text-sm text-emerald-50 font-semibold ring-1 ring-emerald-500 shadow shadow-emerald-500/60">
           {message}
         </div>
       )}
@@ -151,155 +186,200 @@ export default function ClientesPage() {
       )}
 
       <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800 space-y-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-slate-50">Clientes</h3>
-            <p className="text-sm text-slate-400">Buscar, cadastrar e ver vendas de cada cliente.</p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowForm((v) => !v)}
-              className="rounded-lg bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-900 transition hover:bg-cyan-400"
-            >
-              {showForm ? "Fechar" : "Adicionar cliente"}
-            </button>
-            <button
-              onClick={() => setShowLista((v) => !v)}
-              className="rounded-lg border border-slate-600 px-4 py-2 text-xs font-semibold text-slate-100 hover:border-cyan-400 transition"
-            >
-              {showLista ? "Ocultar lista" : "Mostrar lista"}
-            </button>
-          </div>
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <label className="flex-1 space-y-1 text-sm">
+            <span className="text-xs text-slate-400">Buscar por nome</span>
+            <input
+              value={filtroNome}
+              onChange={(e) => setFiltroNome(e.target.value)}
+              placeholder="Digite para buscar"
+              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+            />
+          </label>
+          <button
+            onClick={() => setShowForm(true)}
+            className="rounded-lg bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-900 transition hover:bg-cyan-400"
+          >
+            Adicionar cliente
+          </button>
         </div>
 
-        {showForm && (
-          <form className="mt-2 grid gap-3 text-sm md:grid-cols-2" onSubmit={handleSubmit}>
-            <input
-              name="nome"
-              required
-              placeholder="Nome"
-              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-            />
-            <input
-              name="telefone"
-              value={telefoneInput}
-              onChange={(e) => {
-                const digits = e.target.value.replace(/\D/g, "").slice(0, 11);
-                let masked = digits;
-                if (digits.length > 2 && digits.length <= 6) {
-                  masked = `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
-                } else if (digits.length > 6) {
-                  masked = `(${digits.slice(0, 2)}) ${digits.slice(2, digits.length - 4)}-${digits.slice(-4)}`;
-                }
-                setTelefoneInput(masked);
-              }}
-              placeholder="Telefone"
-              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-            />
-            <input
-              name="email"
-              value={emailInput}
-              onChange={(e) => setEmailInput(e.target.value)}
-              type="email"
-              placeholder="Email"
-              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-            />
-            <textarea
-              name="observacoes"
-              placeholder="Observações"
-              className="md:col-span-2 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-            />
-            <div className="md:col-span-2">
-              <button
-                type="submit"
-                disabled={salvandoCliente}
-                className="w-full rounded-lg bg-cyan-400 px-3 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
-              >
-                {salvandoCliente ? "Salvando..." : "Salvar cliente"}
-              </button>
-            </div>
-          </form>
-        )}
-
-        {showLista && (
-          <div className="max-h-[520px] overflow-auto rounded-lg border border-slate-800 bg-slate-900/60">
-            <div className="grid gap-3 border-b border-slate-800 bg-slate-900/50 px-4 py-3 text-sm md:grid-cols-3">
-              <label className="space-y-1">
-                <span className="text-xs text-slate-400">Buscar por nome</span>
-                <input
-                  value={filtroNome}
-                  onChange={(e) => setFiltroNome(e.target.value)}
-                  placeholder="Digite para buscar"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
-                />
-              </label>
-            </div>
-            {loading ? (
-              <div className="p-3 text-sm text-slate-400">Carregando...</div>
-            ) : clientes.length === 0 ? (
-              <div className="p-3 text-sm text-slate-400">Nenhum cliente cadastrado.</div>
-            ) : (
-              <table className="min-w-full text-sm text-slate-200">
-                <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
-                  <tr>
-                    <th className="px-4 py-2">Nome</th>
-                    <th className="px-4 py-2">Telefone</th>
-                    <th className="px-4 py-2">Email</th>
-                    <th className="px-4 py-2">Observações</th>
-                    <th className="px-4 py-2 text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {clientes.map((c) => (
-                    <tr key={c.id} className="border-t border-slate-800">
-                      <td className="px-4 py-2">{c.nome}</td>
-                      <td className="px-4 py-2">{c.telefone ?? "-"}</td>
-                      <td className="px-4 py-2">{c.email ?? "-"}</td>
-                      <td className="px-4 py-2">{c.observacoes ?? "-"}</td>
-                      <td className="px-4 py-2 text-right">
-                        <button
-                          type="button"
-                          onClick={() => void carregarVendasCliente(c)}
-                          className="rounded-lg border border-cyan-500 px-3 py-1 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500 hover:text-slate-900"
-                        >
-                          Ver vendas
-                        </button>
-                      </td>
+        <div className="rounded-lg border border-slate-800 bg-slate-900/60">
+          {loading ? (
+            <div className="p-3 text-sm text-slate-400">Carregando...</div>
+          ) : clientes.length === 0 ? (
+            <div className="p-3 text-sm text-slate-400">Nenhum cliente cadastrado.</div>
+          ) : (
+            <>
+              <div className="hidden max-h-[520px] overflow-auto lg:block">
+                <table className="min-w-full text-sm text-slate-200">
+                  <thead className="bg-slate-900/70 text-left text-xs uppercase text-slate-400">
+                    <tr>
+                      <th className="px-4 py-2">Nome</th>
+                      <th className="px-4 py-2">Telefone</th>
+                      <th className="px-4 py-2">Email</th>
+                      <th className="px-4 py-2">Observações</th>
+                      <th className="px-4 py-2 text-right">Ações</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            <div className="flex items-center justify-end gap-2 border-t border-slate-800 bg-slate-900/70 px-4 py-2 text-sm text-slate-200">
+                  </thead>
+                  <tbody>
+                    {clientes.map((c) => (
+                      <tr key={c.id} className="border-t border-slate-800">
+                        <td className="px-4 py-2">{c.nome}</td>
+                        <td className="px-4 py-2">{c.telefone ?? "-"}</td>
+                        <td className="px-4 py-2">{c.email ?? "-"}</td>
+                        <td className="px-4 py-2">{c.observacoes ?? "-"}</td>
+                        <td className="px-4 py-2 text-right">
+                          <button
+                            type="button"
+                            onClick={() => void carregarVendasCliente(c)}
+                            className="rounded-lg border border-cyan-500 px-3 py-1 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500 hover:text-slate-900"
+                          >
+                            Ver vendas
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="space-y-3 p-3 lg:hidden">
+                {clientes.map((c) => (
+                  <div key={c.id} className="rounded-lg bg-slate-900/70 p-3 ring-1 ring-slate-800">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-50">{c.nome}</p>
+                        <p className="text-xs text-slate-400">{c.telefone ?? "-"}</p>
+                        <p className="text-xs text-slate-400">{c.email ?? "-"}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void carregarVendasCliente(c)}
+                        className="rounded-lg border border-cyan-500 px-3 py-1 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500 hover:text-slate-900"
+                      >
+                        Ver vendas
+                      </button>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-300">Obs: {c.observacoes ?? "-"}</p>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+          <div className="border-t border-slate-800 bg-slate-900/70 px-4 py-2">
+            <Pagination className="justify-end">
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious
+                    disabled={page === 1 || loading}
+                    onClick={() => void loadClientes(Math.max(1, page - 1))}
+                  />
+                </PaginationItem>
+                {paginationItems.map((item, index) => (
+                  <PaginationItem key={`${item}-${index}`}>
+                    {item === "ellipsis" ? (
+                      <PaginationEllipsis />
+                    ) : (
+                      <PaginationLink
+                        isActive={item === page}
+                        disabled={item === page || loading}
+                        onClick={() => void loadClientes(item)}
+                      >
+                        {item}
+                      </PaginationLink>
+                    )}
+                  </PaginationItem>
+                ))}
+                <PaginationItem>
+                  <PaginationNext disabled={!canLoadMore} onClick={() => void loadClientes(page + 1)} />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
+          </div>
+        </div>
+      </div>
+
+      {showForm && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/70 px-4 backdrop-blur">
+          <div className="w-full max-w-lg rounded-xl border border-slate-800 bg-slate-950 p-5 shadow-lg">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h4 className="text-lg font-semibold text-slate-50">Novo cliente</h4>
+                <p className="text-sm text-slate-400">Cadastre e use na lista de clientes.</p>
+              </div>
               <button
                 type="button"
                 onClick={() => {
-                  if (page > 1) {
-                    void loadClientes(page - 1);
-                  }
+                  setShowForm(false);
+                  setTelefoneInput("");
+                  setEmailInput("");
                 }}
-                disabled={page === 1 || loading}
-                className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-100 transition hover:border-cyan-400 disabled:opacity-50"
+                className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-100 transition hover:border-rose-500"
               >
-                Anterior
-              </button>
-              <span className="text-xs text-slate-400">Página {page}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  if (canLoadMore) {
-                    void loadClientes(page + 1);
-                  }
-                }}
-                disabled={!canLoadMore}
-                className="rounded-lg border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-100 transition hover:border-cyan-400 disabled:opacity-50"
-              >
-                Próxima
+                Fechar
               </button>
             </div>
+
+            <form className="mt-3 grid gap-3 text-sm md:grid-cols-2" onSubmit={handleSubmit}>
+              <input
+                name="nome"
+                required
+                placeholder="Nome"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              />
+              <input
+                name="telefone"
+                value={telefoneInput}
+                onChange={(e) => {
+                  const digits = e.target.value.replace(/\D/g, "").slice(0, 11);
+                  let masked = digits;
+                  if (digits.length > 2 && digits.length <= 6) {
+                    masked = `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+                  } else if (digits.length > 6) {
+                    masked = `(${digits.slice(0, 2)}) ${digits.slice(2, digits.length - 4)}-${digits.slice(-4)}`;
+                  }
+                  setTelefoneInput(masked);
+                }}
+                placeholder="Telefone"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              />
+              <input
+                name="email"
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                type="email"
+                placeholder="Email"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              />
+              <textarea
+                name="observacoes"
+                placeholder="Observações"
+                className="md:col-span-2 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+              />
+              <div className="md:col-span-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowForm(false);
+                    setTelefoneInput("");
+                    setEmailInput("");
+                  }}
+                  className="rounded-lg border border-slate-700 px-4 py-2 font-semibold text-slate-100 transition hover:border-rose-500"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={salvandoCliente}
+                  className="rounded-lg bg-cyan-400 px-4 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:opacity-60"
+                >
+                  {salvandoCliente ? "Salvando..." : "Salvar cliente"}
+                </button>
+              </div>
+            </form>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {modalCliente && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4">
@@ -308,7 +388,7 @@ export default function ClientesPage() {
               <div>
                 <p className="text-base font-semibold text-slate-50">{modalCliente.nome}</p>
                 <p className="text-xs text-slate-400">
-                  {modalCliente.telefone || "-"} • {modalCliente.email || "-"}
+                  {modalCliente.telefone || "-"} â€¢ {modalCliente.email || "-"}
                 </p>
               </div>
               <button
@@ -354,6 +434,6 @@ export default function ClientesPage() {
           </div>
         </div>
       )}
-    </ProtectedShell>
+    </div>
   );
 }

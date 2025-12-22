@@ -1,10 +1,11 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ProtectedShell } from "@/components/protected-shell";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-client";
+import { PageMeta } from "@/components/page-meta";
 
 type Customer = { id: string; nome: string };
+type CustomerIndexed = Customer & { search: string };
 type PaymentType = { id: string; descricao: string };
 type CardAccount = {
   id: string;
@@ -105,11 +106,17 @@ const maskPhone = (value: string) => {
   return digits.replace(/(\d{2})(\d{5})(\d{0,4})/, (_m, ddd, p1, p2) => `(${ddd}) ${p1}${p2 ? "-" + p2 : ""}`);
 };
 const isValidEmail = (email: string) => /^\S+@\S+\.\S+$/.test(email);
+const normalizeText = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
 
 type ItemInput = { produtoId: string; qtde: string; valorUnit: string; search: string };
 
 export default function VendasPage() {
   const [clientes, setClientes] = useState<Customer[]>([]);
+  const [clientesLoading, setClientesLoading] = useState(false);
   const [paymentTypes, setPaymentTypes] = useState<PaymentType[]>([]);
   const [cards, setCards] = useState<CardAccount[]>([]);
   const [cardRules, setCardRules] = useState<CardRule[]>([]);
@@ -151,14 +158,16 @@ export default function VendasPage() {
   const [filtroCliente, setFiltroCliente] = useState("");
   const [filtroTipoPagamentoId, setFiltroTipoPagamentoId] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("");
-  const skipFirstFilterLoad = useRef(true);
-  const filterState = {
-    dataInicio: filtroDataInicio,
-    dataFim: filtroDataFim,
-    clienteNome: filtroCliente,
-    tipoPagamentoId: filtroTipoPagamentoId,
-    status: filtroStatus,
-  };
+  const filterState = useMemo(
+    () => ({
+      dataInicio: filtroDataInicio,
+      dataFim: filtroDataFim,
+      clienteNome: filtroCliente.trim().length >= 2 ? filtroCliente.trim() : "",
+      tipoPagamentoId: filtroTipoPagamentoId,
+      status: filtroStatus,
+    }),
+    [filtroDataInicio, filtroDataFim, filtroCliente, filtroTipoPagamentoId, filtroStatus],
+  );
 
   const [form, setForm] = useState({
     data: todayLocal(),
@@ -178,6 +187,7 @@ export default function VendasPage() {
 
   const [itens, setItens] = useState<ItemInput[]>([{ produtoId: "", qtde: "1", valorUnit: "0,00", search: "" }]);
   const [mostrarNovaVenda, setMostrarNovaVenda] = useState(false);
+  const initialLoadDone = useRef(false);
 
   const tipoSelecionado = useMemo(
     () => paymentTypes.find((t) => t.id === form.tipoPagamentoId),
@@ -349,11 +359,49 @@ export default function VendasPage() {
     return previewTaxa.liquidoTotal;
   }, [regraSelecionada, previewTaxa, totalFinal]);
 
+  const clientesIndex: CustomerIndexed[] = useMemo(
+    () => clientes.map((c) => ({ ...c, search: normalizeText(c.nome || "") })),
+    [clientes],
+  );
+  const clienteBuscaDeferred = useDeferredValue(clienteBusca);
+  const clienteBuscaTerm = useMemo(() => normalizeText(clienteBuscaDeferred.trim()), [clienteBuscaDeferred]);
   const clientesFiltrados = useMemo(() => {
-    const term = clienteBusca.trim().toLowerCase();
-    if (!term) return clientes;
-    return clientes.filter((c) => c.nome.toLowerCase().includes(term));
-  }, [clienteBusca, clientes]);
+    if (clienteBuscaTerm.length < 2) return [];
+    return clientesIndex.filter((c) => c.search.includes(clienteBuscaTerm));
+  }, [clienteBuscaTerm, clientesIndex]);
+
+  const clienteFetchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (clienteFetchTimeout.current) clearTimeout(clienteFetchTimeout.current);
+    if (clienteBuscaTerm.length < 2) {
+      setClientes([]);
+      setClientesLoading(false);
+      return;
+    }
+    let active = true;
+    setClientesLoading(true);
+    clienteFetchTimeout.current = setTimeout(() => {
+      const params = new URLSearchParams();
+      params.append("nome", clienteBuscaTerm);
+      params.append("limit", "100");
+      void apiFetch<Customer[]>(`/clientes?${params.toString()}`)
+        .then((res) => {
+          if (!active) return;
+          setClientes(res || []);
+        })
+        .catch(() => {
+          if (!active) return;
+          setClientes([]);
+        })
+        .finally(() => {
+          if (active) setClientesLoading(false);
+        });
+    }, 1000);
+    return () => {
+      active = false;
+      if (clienteFetchTimeout.current) clearTimeout(clienteFetchTimeout.current);
+    };
+  }, [clienteBuscaTerm]);
 
   const totalColorClass = (status: string | undefined) => {
     const s = (status || "").toLowerCase();
@@ -397,31 +445,32 @@ export default function VendasPage() {
     return status;
   }, [detalhe]);
 
-  const buildVendasQuery = (override?: Partial<typeof filterState>) => {
-    const filters = { ...filterState, ...override };
-    const params = new URLSearchParams();
-    if (filters.dataInicio) params.append("dataInicio", filters.dataInicio);
-    if (filters.dataFim) params.append("dataFim", filters.dataFim);
-    if (filters.clienteNome) params.append("clienteNome", filters.clienteNome);
-    if (filters.tipoPagamentoId) params.append("tipoPagamentoId", filters.tipoPagamentoId);
-    if (filters.status) params.append("status", filters.status);
-    const query = params.toString();
-    return query ? `?${query}` : "";
-  };
+  const buildVendasQuery = useCallback(
+    (override?: Partial<typeof filterState>) => {
+      const filters = { ...filterState, ...override };
+      const params = new URLSearchParams();
+      if (filters.dataInicio) params.append("dataInicio", filters.dataInicio);
+      if (filters.dataFim) params.append("dataFim", filters.dataFim);
+      if (filters.clienteNome) params.append("clienteNome", filters.clienteNome);
+      if (filters.tipoPagamentoId) params.append("tipoPagamentoId", filters.tipoPagamentoId);
+      if (filters.status) params.append("status", filters.status);
+      const query = params.toString();
+      return query ? `?${query}` : "";
+    },
+    [filterState.dataFim, filterState.dataInicio, filterState.clienteNome, filterState.tipoPagamentoId, filterState.status],
+  );
 
   const unwrapProducts = (data: Product[] | { items?: Product[] } | null | undefined) => {
     if (!data) return [];
     return Array.isArray(data) ? data : data.items ?? [];
   };
 
-  const carregarBases = async () => {
-    const [cli, tipos, ca, prd] = await Promise.all([
-      apiFetch<Customer[]>("/clientes"),
+  const carregarBases = useCallback(async () => {
+    const [tipos, ca, prd] = await Promise.all([
       apiFetch<PaymentType[]>("/financeiro/tipos-pagamento"),
       apiFetch<CardAccount[]>("/financeiro/cartoes-contas"),
       apiFetch<Product[] | { items?: Product[] }>("/produtos?limit=1000"),
     ]);
-    setClientes(cli || []);
     setPaymentTypes(tipos || []);
     const cardsData = ca || [];
     setCards(cardsData);
@@ -438,21 +487,24 @@ export default function VendasPage() {
     } catch {
       // ignora erro silencioso; sera buscado sob demanda
     }
-  };
+  }, []);
 
-  const carregarVendas = async (override?: Partial<typeof filterState>) => {
-    try {
-      setCarregando(true);
-      const query = buildVendasQuery(override);
-      const ven = await apiFetch<Sale[]>(`/vendas${query}`);
-      setVendas(ven || []);
-      setErro(null);
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao carregar dados");
-    } finally {
-      setCarregando(false);
-    }
-  };
+  const carregarVendas = useCallback(
+    async (override?: Partial<typeof filterState>) => {
+      try {
+        setCarregando(true);
+        const query = buildVendasQuery(override);
+        const ven = await apiFetch<Sale[]>(`/vendas${query}`);
+        setVendas(ven || []);
+        setErro(null);
+      } catch (e) {
+        setErro(e instanceof Error ? e.message : "Erro ao carregar dados");
+      } finally {
+        setCarregando(false);
+      }
+    },
+    [buildVendasQuery],
+  );
 
   const devolverVenda = async () => {
     if (!devolucaoModal?.id) return;
@@ -476,7 +528,7 @@ export default function VendasPage() {
       setErro(e instanceof Error ? e.message : "Erro ao devolver venda");
     }
   };
-  const carregarTudo = async () => {
+  const carregarTudo = useCallback(async () => {
     setCarregando(true);
     try {
       await carregarBases();
@@ -486,19 +538,33 @@ export default function VendasPage() {
     } finally {
       setCarregando(false);
     }
-  };
+  }, [carregarBases, carregarVendas]);
 
   useEffect(() => {
+    if (initialLoadDone.current) return;
+    initialLoadDone.current = true;
     void carregarTudo();
-  }, []);
+  }, [carregarTudo]);
 
   useEffect(() => {
-    if (skipFirstFilterLoad.current) {
-      skipFirstFilterLoad.current = false;
-      return;
-    }
-    void carregarVendas();
-  }, [filtroDataInicio, filtroDataFim, filtroCliente, filtroTipoPagamentoId, filtroStatus]);
+    if (!initialLoadDone.current) return;
+    void carregarVendas({ dataInicio: filtroDataInicio, dataFim: filtroDataFim });
+  }, [filtroDataInicio, filtroDataFim, carregarVendas]);
+
+  const vendasFiltradas = useMemo(() => {
+    const clienteTerm = normalizeText(filtroCliente.trim());
+    const dataIni = filtroDataInicio ? new Date(filtroDataInicio) : null;
+    const dataFim = filtroDataFim ? new Date(filtroDataFim) : null;
+    return vendas.filter((v) => {
+      const dataVenda = v.data ? new Date(v.data) : null;
+      if (dataIni && dataVenda && dataVenda < dataIni) return false;
+      if (dataFim && dataVenda && dataVenda > dataFim) return false;
+      if (clienteTerm && !normalizeText(v.cliente?.nome || "").includes(clienteTerm)) return false;
+      if (filtroTipoPagamentoId && v.tipoPagamento?.id !== filtroTipoPagamentoId) return false;
+      if (filtroStatus && v.status !== filtroStatus) return false;
+      return true;
+    });
+  }, [vendas, filtroCliente, filtroDataInicio, filtroDataFim, filtroTipoPagamentoId, filtroStatus]);
 
   useEffect(() => {
     if (!requiresCard) {
@@ -656,7 +722,6 @@ export default function VendasPage() {
       pagoAgora: form.pagoAgora || undefined,
       dataPagamento: form.pagoAgora ? form.data : undefined,
       frete: parseCurrency(form.frete),
-      frete: freteValor,
       descontoTotal: descontoValor,
       observacoes: form.observacoes || undefined,
       itens: itens.map((it) => ({
@@ -782,7 +847,7 @@ export default function VendasPage() {
       return;
     }
     if (novoCliente.email && !isValidEmail(novoCliente.email)) {
-      setErro("Email invalido.");
+      setErro("Email inválido.");
       return;
     }
     try {
@@ -809,21 +874,23 @@ export default function VendasPage() {
   };
 
   return (
-    <ProtectedShell title="Vendas" subtitle="Registre vendas com baixa de estoque e recebimentos.">
+    <div>
+      <PageMeta title="Vendas" subtitle="Registre vendas com baixa de estoque e recebimentos." />
       {erro && (
         <div className="mb-4 rounded-lg bg-rose-500/10 px-4 py-2 text-sm text-rose-200 ring-1 ring-rose-500/40">
           {erro}
         </div>
       )}
       {mensagem && (
-        <div className="mb-4 rounded-lg bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200 ring-1 ring-emerald-500/40">
+        <div className="mb-4 rounded-lg bg-emerald-700/40 px-4 py-2 text-sm text-emerald-50 font-semibold ring-1 ring-emerald-500 shadow shadow-emerald-500/60">
           {mensagem}
         </div>
       )}
 
       <div className="grid gap-6">
         {mostrarNovaVenda && (
-          <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4 backdrop-blur-sm">
+            <div className="w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-xl bg-slate-900 p-5 ring-1 ring-slate-800">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-slate-50">Nova venda</h3>
@@ -863,13 +930,13 @@ export default function VendasPage() {
                   <button
                     type="button"
                     onClick={() => setShowClienteModal(true)}
-                    className="text-xs font-semibold text-cyan-300 hover:text-cyan-100"
+                    className="rounded-lg border border-cyan-500 px-3 py-1 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500 hover:text-slate-900"
                   >
-                    + adicionar
+                    Adicionar cliente
                   </button>
                 </div>
                 <input
-                  placeholder="Buscar cliente"
+                  placeholder="Buscar cliente (mín. 2 letras)"
                   value={clienteBusca}
                   onChange={(e) => setClienteBusca(e.target.value)}
                   className="mb-2 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-50 outline-none focus:border-cyan-400"
@@ -877,9 +944,16 @@ export default function VendasPage() {
                 <select
                   value={form.clienteId}
                   onChange={(e) => setForm((p) => ({ ...p, clienteId: e.target.value }))}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400 disabled:opacity-60"
+                  disabled={clienteBuscaTerm.length < 2 || clientesLoading}
                 >
-                  <option value="">Selecione o cliente</option>
+                  <option value="">
+                    {clienteBuscaTerm.length < 2
+                      ? "Digite 2+ letras para buscar"
+                      : clientesLoading
+                        ? "Buscando..."
+                        : "Selecione o cliente"}
+                  </option>
                   {clientesFiltrados.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.nome}
@@ -1000,7 +1074,7 @@ export default function VendasPage() {
                   type="checkbox"
                   checked={form.pagoAgora}
                   onChange={(e) => setForm((p) => ({ ...p, pagoAgora: e.target.checked }))}
-                  className="h-4 w-4 rounded border-slate-700 bg-slate-800 text-emerald-500 focus:ring-emerald-400"
+                  className="h-4 w-4 rounded border-slate-700 bg-slate-800 text-emerald-500 focus:ring-emerald-500"
                 />
                 <span>Pago agora</span>
               </label>
@@ -1128,9 +1202,9 @@ export default function VendasPage() {
                 })}
               </div>
 
-              <div className="mt-4 flex justify-end">
-                <button
-                  type="button"
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
                   onClick={() => {
                     setMostrarNovaVenda(false);
                     setForm({
@@ -1165,14 +1239,15 @@ export default function VendasPage() {
               </div>
             </div>
           </div>
+        </div>
         )}
 
         <div className="rounded-xl bg-slate-900/70 p-5 ring-1 ring-slate-800">
           <div className="flex items-center justify-between">
-            <div>
+            {/*<div>
               <h3 className="text-lg font-semibold text-slate-50">Vendas registradas</h3>
               <p className="text-sm text-slate-400">Visualize detalhes, itens e recebimentos.</p>
-            </div>
+            </div>*/}
             <div className="flex justify-end pb-2">
               <div className="flex gap-2">
                 <button
@@ -1255,12 +1330,12 @@ export default function VendasPage() {
 
           {/* Cards para telas menores que 1000px */}
           <div className="mt-4 space-y-3 lg:hidden">
-            {vendas.length === 0 ? (
+            {vendasFiltradas.length === 0 ? (
               <div className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-300 ring-1 ring-slate-800">
                 Nenhuma venda registrada.
               </div>
             ) : (
-              vendas.map((v) => (
+              vendasFiltradas.map((v) => (
                 <div
                   key={v.id}
                   className="rounded-lg bg-slate-900/60 p-3 text-sm text-slate-200 ring-1 ring-slate-800"
@@ -1347,7 +1422,7 @@ export default function VendasPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800 bg-slate-950/40 text-slate-100">
-                {vendas.map((v) => (
+                  {vendasFiltradas.map((v) => (
                   <tr key={v.id}>
                     <td className="px-4 py-2 text-sm">{new Date(v.data).toLocaleDateString()}</td>
                     <td className="px-4 py-2 text-sm">{v.cliente?.nome}</td>
@@ -1410,7 +1485,7 @@ export default function VendasPage() {
                     </td>
                 </tr>
                 ))}
-                {vendas.length === 0 && (
+                {vendasFiltradas.length === 0 && (
                   <tr>
                     <td className="px-4 py-6 text-center text-slate-400" colSpan={6}>
                       Nenhuma venda registrada.
@@ -1736,7 +1811,7 @@ export default function VendasPage() {
       )}
 
       {showClienteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4 backdrop-blur">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/70 px-4 backdrop-blur">
           <div className="w-full max-w-lg rounded-xl border border-slate-800 bg-slate-950 p-5 shadow-lg">
             <h4 className="text-lg font-semibold text-slate-50">Novo cliente</h4>
             <p className="text-sm text-slate-400">Cadastre e selecione para esta venda.</p>
@@ -1770,13 +1845,13 @@ export default function VendasPage() {
                 />
               </label>
               <label className="space-y-1">
-                <span className="text-slate-300">Observacoes</span>
+                <span className="text-slate-300">Observações</span>
                 <textarea
                   value={novoCliente.observacoes}
                   onChange={(e) => setNovoCliente((p) => ({ ...p, observacoes: e.target.value }))}
                   className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-50 outline-none focus:border-cyan-400"
                   rows={3}
-                  placeholder="Observacoes do cliente"
+                  placeholder="Observações do cliente"
                 />
               </label>
             </div>
@@ -1803,6 +1878,6 @@ export default function VendasPage() {
           </div>
         </div>
       )}
-    </ProtectedShell>
+    </div>
   );
 }
